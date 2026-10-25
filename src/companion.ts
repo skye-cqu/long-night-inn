@@ -57,6 +57,8 @@ export class Companion {
   private current = 'Idle';
   private loaded = false;
   followEnabled = true;
+  /** 恐惧表 0..1（实体逼近时由玩法层写入）：跟随迟滞、缩到玩家更身后 */
+  fear = 0;
 
   readonly position = new Vector3();
   private yaw = 0;
@@ -123,9 +125,12 @@ export class Companion {
     if (this.followEnabled) {
       const fwd = { x: Math.cos(playerYaw), z: Math.sin(playerYaw) };
       const right = { x: -fwd.z, z: fwd.x };
-      const tx = playerPos.x - fwd.x * FOLLOW_BACK + right.x * FOLLOW_RIGHT;
-      const tz = playerPos.z - fwd.z * FOLLOW_BACK + right.z * FOLLOW_RIGHT;
-      const a = 1 - Math.exp(-FOLLOW_LERP * dt);
+      // 恐惧迟滞（看得见的机制）：越怕跟得越紧但反应越慢——躲玩家身后 0.55m
+      const fearBack = FOLLOW_BACK + this.fear * 0.55;
+      const fearLerp = FOLLOW_LERP * (1 - 0.6 * this.fear);
+      const tx = playerPos.x - fwd.x * fearBack + right.x * FOLLOW_RIGHT;
+      const tz = playerPos.z - fwd.z * fearBack + right.z * FOLLOW_RIGHT;
+      const a = 1 - Math.exp(-fearLerp * dt);
       this.position.x += (tx - this.position.x) * a;
       this.position.z += (tz - this.position.z) * a;
       // 与玩家相同的走廊包围盒钳制，避免跟随目标点穿出走廊

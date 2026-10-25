@@ -15,20 +15,35 @@ import type { VoxelCollision } from './collision';
 const STEP = 1 / 60;
 const MAX_SUBSTEPS = 10;
 const MOVE_SPEED = 2.2; // m/s，室内走廊速度
+const SPRINT_SPEED = 4.2; // 跑：比实体追击(3.1)快，走得掉要靠跑
+const CROUCH_SPEED = 1.05; // 蹲行：近乎无声
 const CAPSULE_HEIGHT = 1.5;
 const CAPSULE_RADIUS = 0.12;
 const HOVER_HEIGHT = 0.2;
 const EYE_HEIGHT = CAPSULE_HEIGHT - 0.1 - HOVER_HEIGHT; // 1.2
+const CROUCH_EYE_HEIGHT = 0.78; // 蹲下视高
 const GRAVITY = 9.8;
 const ACCEL_GROUNDED = 24;
 const MOUSE_SENSITIVITY = 0.0022;
 const WALL_MARGIN = 0.35; // 简化碰撞（无体素时）的走廊内缩
+const STAMINA_MAX = 100;
+const STAMINA_DRAIN = 26; // /s 跑步消耗
+const STAMINA_REGEN = 14; // /s 恢复
+const STAMINA_SPRINT_MIN = 20; // 低于此值强制回走，恢复过 20 才能再跑
+
+export type Gait = 'walk' | 'sprint' | 'crouch';
 
 export interface PlayerState {
   position: Vector3;
   yaw: number;
   speed: number;
   grounded: boolean;
+  /** 当前步态（噪音等级与动画用） */
+  gait: Gait;
+  /** 是否在水平移动 */
+  moving: boolean;
+  /** 体力 0..100 */
+  stamina: number;
 }
 
 export class WalkControls {
@@ -37,6 +52,10 @@ export class WalkControls {
   pitch = 0;
   speed = 0;
   grounded = false;
+  /** 蹲行开关（C 切换） */
+  crouched = false;
+  stamina = STAMINA_MAX;
+  gait: Gait = 'walk';
 
   private velocity = new Vector3();
   private keys: Record<string, boolean> = {};
@@ -48,6 +67,10 @@ export class WalkControls {
   private nav: NavField;
   private container: HTMLElement;
   private enabled = false;
+  /** 文本输入模式（伙计说话框聚焦时）：吞掉移动键，不 preventDefault */
+  private textMode = false;
+  private eyeSmooth = EYE_HEIGHT;
+  private staminaLock = false;
 
   constructor(container: HTMLElement, nav: NavField, collision: VoxelCollision | null) {
     this.container = container;
@@ -95,22 +118,65 @@ export class WalkControls {
   }
 
   get playerState(): PlayerState {
-    return { position: this.position, yaw: this.yaw, speed: this.speed, grounded: this.grounded };
+    return {
+      position: this.position,
+      yaw: this.yaw,
+      speed: this.speed,
+      grounded: this.grounded,
+      gait: this.gait,
+      moving: this.speed > 0.25,
+      stamina: this.stamina,
+    };
+  }
+
+  get isPointerLocked() {
+    return this.pointerLocked;
+  }
+
+  /** 说话框等文本输入聚焦时：键盘交给输入框，停止移动 */
+  setTextInputMode(v: boolean) {
+    this.textMode = v;
+    if (v) this.keys = {};
+  }
+
+  /** 阶段切换：暂停/恢复输入（镜头应用不受影响） */
+  setRuntimeEnabled(v: boolean) {
+    this.enabled = v;
+    if (!v) {
+      this.keys = {};
+      this.debugInput = { forward: 0, strafe: 0 };
+    }
   }
 
   // ---- 内部 ----
 
   private step(dt: number) {
-    // 输入 → 期望水平速度
+    // 输入 → 期望水平速度（步态：蹲 > 走 > 跑，跑耗体力）
     const fwd = { x: Math.cos(this.yaw), z: Math.sin(this.yaw) };
     const right = { x: -fwd.z, z: fwd.x }; // fwd × up（up=+Y）
     const keyF = (this.keys.KeyW || this.keys.ArrowUp ? 1 : 0) - (this.keys.KeyS || this.keys.ArrowDown ? 1 : 0);
     const keyS = (this.keys.KeyD || this.keys.ArrowRight ? 1 : 0) - (this.keys.KeyA || this.keys.ArrowLeft ? 1 : 0);
+    const moving =
+      keyF !== 0 || keyS !== 0 || Math.abs(this.debugInput.forward) > 0.01 || Math.abs(this.debugInput.strafe) > 0.01;
+    const wantSprint = (this.keys.ShiftLeft || this.keys.ShiftRight) && moving && !this.crouched;
+    // 体力闸：耗尽锁定，恢复过阈值再放开
+    if (this.stamina <= 0.5) this.staminaLock = true;
+    if (this.stamina >= STAMINA_SPRINT_MIN) this.staminaLock = false;
+    const sprinting = wantSprint && !this.staminaLock;
+    this.gait = this.crouched ? 'crouch' : sprinting ? 'sprint' : 'walk';
+    const moveSpeed = this.gait === 'sprint' ? SPRINT_SPEED : this.gait === 'crouch' ? CROUCH_SPEED : MOVE_SPEED;
+    if (sprinting) this.stamina = Math.max(0, this.stamina - STAMINA_DRAIN * dt);
+    else this.stamina = Math.min(STAMINA_MAX, this.stamina + STAMINA_REGEN * dt);
+
+    // 蹲起视高平滑
+    const eyeTarget = this.crouched ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
+    this.eyeSmooth += (eyeTarget - this.eyeSmooth) * Math.min(1, 10 * dt);
+
     let mx = fwd.x * keyF + right.x * keyS + fwd.x * this.debugInput.forward + right.x * this.debugInput.strafe;
     let mz = fwd.z * keyF + right.z * keyS + fwd.z * this.debugInput.forward + right.z * this.debugInput.strafe;
     const len = Math.hypot(mx, mz);
-    const targetX = len > 1e-6 ? (mx / len) * MOVE_SPEED : 0;
-    const targetZ = len > 1e-6 ? (mz / len) * MOVE_SPEED : 0;
+    const targetX = len > 1e-6 ? (mx / len) * moveSpeed : 0;
+    const targetZ = len > 1e-6 ? (mz / len) * moveSpeed : 0;
 
     if (this.collision) {
       this.stepVoxel(dt, targetX, targetZ);
@@ -134,7 +200,7 @@ export class WalkControls {
     const groundY = this.groundYFiltered ?? rawGroundY;
 
     if (groundY !== null) {
-      const targetY = groundY + HOVER_HEIGHT + EYE_HEIGHT;
+      const targetY = groundY + HOVER_HEIGHT + this.eyeSmooth;
       const displacement = this.position.y - targetY;
       if (displacement > 0.1) {
         // 高于地面：重力下落
@@ -179,7 +245,7 @@ export class WalkControls {
     this.position.x = Math.min(Math.max(this.position.x, bboxMin[0] + WALL_MARGIN), bboxMax[0] - WALL_MARGIN);
     this.position.z = Math.min(Math.max(this.position.z, bboxMin[2] + WALL_MARGIN), bboxMax[2] - WALL_MARGIN);
     const floorY = this.nav.floorAt(this.position.x, this.position.z);
-    const targetEye = floorY + EYE_HEIGHT;
+    const targetEye = floorY + this.eyeSmooth;
     const dy = targetEye - this.position.y;
     this.position.y += dy * Math.min(1, (dy > 0 ? 6 : 14) * dt);
     this.grounded = true;
@@ -261,13 +327,27 @@ export class WalkControls {
     return { ...this.debugInput };
   }
 
+  /** 自动化：按住/松开跑（等同 Shift） */
+  setSprint(v: boolean) {
+    this.keys.ShiftLeft = v;
+    return v;
+  }
+
+  /** 自动化：蹲下开关 */
+  setCrouch(v: boolean) {
+    this.crouched = v;
+    return v;
+  }
+
   setYaw(yaw: number) {
     this.yaw = yaw;
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (!this.enabled) return;
+    if (this.textMode) return; // 文本框聚焦：键盘归输入框
     this.keys[e.code] = true;
+    if (e.code === 'KeyC') this.crouched = !this.crouched;
     if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       e.preventDefault();
     }
