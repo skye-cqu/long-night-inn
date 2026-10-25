@@ -1,0 +1,23 @@
+{
+  "name": "long-night-inn",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "merge:glb": "node scripts/merge-glb-animations.mjs",
+    "voxel": "node scripts/gen-voxel.mjs"
+  },
+  "dependencies": {
+    "@manycore/aholo-viewer": "1.11.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@manycore/aholo-splat-transform": "^2.0.2",
+    "@types/three": "^0.180.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.0"
+  }
+}

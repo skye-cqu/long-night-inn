@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>长夜驿站 · 脚手架</title>
+  <!-- 生产构建用：viewer 保持 external，由该 importmap 指向随 dist 复制的
+       /vendor/aholo-viewer/（worker 相对路径依赖同目录文件）。dev 下此表不生效。 -->
+  <script type="importmap">
+    { "imports": { "@manycore/aholo-viewer": "/vendor/aholo-viewer/index.js" } }
+  </script>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+    #app { position: fixed; inset: 0; }
+    #hud {
+      position: fixed; left: 8px; top: 8px; z-index: 10;
+      color: #7dffb0; background: rgba(0, 0, 0, 0.55);
+      font: 12px/1.6 Consolas, monospace; padding: 6px 10px;
+      white-space: pre; pointer-events: none;
+    }
+    #hint {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10;
+      color: #cfe8ff; background: rgba(0, 0, 0, 0.55);
+      font: 13px/1.6 system-ui, sans-serif; padding: 6px 14px; border-radius: 4px;
+      pointer-events: none; transition: opacity 0.5s;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud">boot…</div>
+  <div id="hint">点击画面进入行走模式 · WASD 移动 / 鼠标转向 / ESC 释放鼠标</div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
