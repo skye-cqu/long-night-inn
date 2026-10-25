@@ -1,14 +1,11 @@
 /**
- * main.ts — 《长夜驿站》脚手架装配：aholo-viewer 渲染 SPZ 世界 + GLB 伙计 +
- * 第一人称行走 + 调试 HUD / window.__game 自动化接口。
+ * main.ts — 《长夜驿站》装配：aholo-viewer 渲染 SPZ 世界 + GLB 伙计 + 第一人称行走，
+ * 委托给 src/game/ 的玩法状态机（阶段二：N1 教学夜完整玩法垂直切片）。
  *
- * - viewer 初始化复用 2026-10-26 go/no-go 验收测试页已跑通的探针代码，
- *   渲染循环骨架参考官方 walk-demo 与官网 render-runtime（自建 Scene3D + setScene、
- *   pixelRatio、禁用坐标系 gizmo 与各级 culling）。
- * - up 约定：N1 世界（Aholo World API 输出）渲染空间为 +Y up（?up=1/?up=-1
- *   渲染对比 + studio 官方查看器截图亮度梯度同号判定，2026-10-26）；官方
- *   quickstart 的「splat 为 OpenCV -Y up」仅适用于 bear.sog 等原始资产。
- *   ?up=-1 仅作世界侧对照调试。
+ * - viewer 初始化复用脚手架已跑通的 wiring（Scene3D + setScene、禁用 gizmo/culling）。
+ * - up 约定：N1 世界（Aholo World API 输出）渲染空间为 +Y up（?up=1/?up=-1 亮度梯度
+ *   A/B 判定，2026-10-26）；?up=-1 仅作世界侧对照调试。
+ * - 调试：?debug=1 显示左上角技术 HUD；window.__game 见文件尾部。
  */
 import {
   BackgroundMode,
@@ -25,21 +22,26 @@ import { buildNavField, type NavData } from './nav';
 import { WalkControls } from './walk-controls';
 import { loadVoxelCollision } from './collision';
 import { Companion } from './companion';
+import { Game } from './game/game';
 
 const { parseSplatData, detectSplatFileType, SplatFileType } = SplatLoader;
 const { createSplat } = SplatUtils;
 
 const DEFAULT_UP_SIGN = 1;
+const PAGE_T0 = performance.now(); // FTUE 冷加载计时锚点
 const params = new URLSearchParams(location.search);
 const upSign = params.get('up') === '-1' ? -1 : DEFAULT_UP_SIGN;
+const debugHud = params.get('debug') === '1';
 
 const errors: string[] = [];
 addEventListener('error', (e) => errors.push('error: ' + e.message));
 addEventListener('unhandledrejection', (e) => errors.push('rejection: ' + e.reason));
 
 const container = document.getElementById('app')!;
+const uiRoot = document.getElementById('game-ui')!;
 const hud = document.getElementById('hud')!;
 const hint = document.getElementById('hint')!;
+if (!debugHud) hud.style.display = 'none';
 
 interface GameDebugState {
   phase: string;
@@ -113,17 +115,17 @@ addEventListener('resize', () => {
 
 let controls: WalkControls | null = null;
 let companion: Companion | null = null;
-let navData: NavData | null = null;
+let game: Game | null = null;
 let worldSplat: unknown = null;
 
-// ---- 世界与伙计加载 ----
+// ---- 世界与伙计加载（标题页期间后台进行） ----
 const T0 = performance.now();
 (async () => {
   try {
     state.phase = 'load-nav';
     const navResp = await fetch('./assets/world-n1.nav.json');
     if (!navResp.ok) throw new Error('fetch nav HTTP ' + navResp.status);
-    navData = (await navResp.json()) as NavData;
+    const navData = (await navResp.json()) as NavData;
 
     state.phase = 'fetch-world';
     const resp = await fetch('./assets/world-n1.spz');
@@ -147,38 +149,37 @@ const T0 = performance.now();
     const collision = await loadVoxelCollision('./assets/collision.voxel-meta.json', './assets/collision.voxel.bin');
     state.collision = collision ? 'voxel' : 'nav-fallback';
     controls = new WalkControls(container, nav, collision);
-    const spawn = spawnFromBBox(nav);
-    controls.startAt(spawn.x, spawn.z, spawn.yaw);
-    hint.style.opacity = '1';
+    controls.setRuntimeEnabled(false); // 标题页阶段禁输入
 
     companion = new Companion(nav);
-    companion.position.set(spawn.x - Math.cos(spawn.yaw) * 1.4, nav.floorAt(spawn.x, spawn.z), spawn.z);
     state.phase = 'load-companion';
     await companion.load('./assets/huoji.glb', viewer, gameScene);
-    state.phase = 'rendering';
+    state.phase = 'ready';
 
+    // 玩法状态机（标题页在资产就绪后弹出；标题遮挡期间世界已在后台加载完毕）
+    game = new Game({
+      scene: gameScene,
+      nav,
+      collision,
+      controls,
+      companion,
+      appContainer: container,
+      uiRoot,
+      hint,
+    });
+    game.begin();
+    game.markBoot(PAGE_T0);
     requestAnimationFrame(loop);
   } catch (err) {
     state.phase = 'error';
     const e = err as { stack?: string; message?: string };
     errors.push('load: ' + (e?.stack ?? e?.message ?? String(err)));
+    hud.style.display = debugHud ? '' : 'block';
     hud.textContent = 'ERROR: ' + err;
   }
 })();
 
-/** 初始机位：走廊长轴中点附近，朝长轴正方向（包围盒推导，go/no-go 探针结论） */
-function spawnFromBBox(nav: ReturnType<typeof buildNavField>) {
-  const [minX, , minZ] = nav.bboxMin;
-  const [maxX, , maxZ] = nav.bboxMax;
-  const x = minX + (maxX - minX) * 0.3;
-  const z = (minZ + maxZ) * 0.5;
-  const spanX = maxX - minX;
-  const spanZ = maxZ - minZ;
-  const yaw = spanX >= spanZ ? 0 : Math.PI / 2; // 长轴为 x 时朝 +x
-  return { x, z, yaw };
-}
-
-// ---- 渲染循环 + HUD ----
+// ---- 渲染循环 + 技术调试 HUD ----
 let lastT = performance.now();
 let frames = 0;
 let fpsWindowStart = performance.now();
@@ -195,27 +196,29 @@ function loop(t: number) {
       companion.update(ps.position, ps.yaw, dt);
     }
   }
+  if (game) game.update(dt, t / 1000);
   viewer.render();
 
-  // HUD（每 ~500ms 刷新一次文本，避免布局抖动）
   frames++;
   if (t - fpsWindowStart > 500) {
     state.fps = Math.round((frames * 1000) / (t - fpsWindowStart));
     frames = 0;
     fpsWindowStart = t;
-    const p = controls?.position;
-    const cp = companion?.position;
-    state.camPos = p ? { x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) } : null;
-    state.yaw = +(controls ? (controls.yaw * 180) / Math.PI : 0).toFixed(1);
-    state.companionAnim = companion?.animName ?? 'loading';
-    state.companionPos = cp ? { x: +cp.x.toFixed(2), y: +cp.y.toFixed(2), z: +cp.z.toFixed(2) } : null;
-    state.companionSpeed = +(companion?.speed ?? 0).toFixed(2);
-    hud.textContent =
-      `phase=${state.phase} fps=${state.fps} up=${upSign}\n` +
-      `cam=${state.camPos ? JSON.stringify(state.camPos) : '-'} yaw=${state.yaw}°\n` +
-      `伙计: ${state.companionAnim} v=${state.companionSpeed} ${state.companionPos ? JSON.stringify(state.companionPos) : '-'}\n` +
-      (state.errors.length ? `errors[${state.errors.length}]` : '');
-    if (state.phase === 'rendering') hint.textContent = '点击画面进入行走模式 · WASD 移动 / 鼠标转向 / ESC 释放鼠标';
+    if (debugHud) {
+      const p = controls?.position;
+      const cp = companion?.position;
+      state.camPos = p ? { x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) } : null;
+      state.yaw = +(controls ? (controls.yaw * 180) / Math.PI : 0).toFixed(1);
+      state.companionAnim = companion?.animName ?? 'loading';
+      state.companionPos = cp ? { x: +cp.x.toFixed(2), y: +cp.y.toFixed(2), z: +cp.z.toFixed(2) } : null;
+      state.companionSpeed = +(companion?.speed ?? 0).toFixed(2);
+      hud.textContent =
+        `phase=${state.phase} fps=${state.fps} up=${upSign}\n` +
+        `cam=${state.camPos ? JSON.stringify(state.camPos) : '-'} yaw=${state.yaw}°\n` +
+        `伙计: ${state.companionAnim} v=${state.companionSpeed} ${state.companionPos ? JSON.stringify(state.companionPos) : '-'}\n` +
+        (game ? `stage=${(game as { stage?: string }).stage}\n` : '') +
+        (state.errors.length ? `errors[${state.errors.length}]` : '');
+    }
   }
   requestAnimationFrame(loop);
 }
@@ -223,11 +226,16 @@ function loop(t: number) {
 // ---- 自动化 / 调试接口 ----
 (window as never as Record<string, unknown>).__game = {
   get state() {
-    return { ...state, errors: [...errors] };
+    return { ...state, stage: game?.stage ?? null, errors: [...errors] };
+  },
+  get night() {
+    return game?.debug ?? null;
   },
   setInput(forward: number, strafe = 0) {
     return controls?.setInput(forward, strafe);
   },
+  setSprint: (v: boolean) => controls?.setSprint(v) ?? null,
+  setCrouch: (v: boolean) => controls?.setCrouch(v) ?? null,
   getPos: () =>
     controls ? { x: +controls.position.x.toFixed(3), y: +controls.position.y.toFixed(3), z: +controls.position.z.toFixed(3) } : null,
   setYaw: (yaw: number) => controls?.setYaw(yaw),
@@ -238,24 +246,26 @@ function loop(t: number) {
     controls.setYaw(yawRad);
     return { x, y, z, yaw: yawRad };
   },
+  /** 阶段直达：title/morning/dive/settle/talk/progress */
+  goto: (stage: string) => (game as unknown as { goto(s: string): void })?.goto(stage as never),
+  /** 验收快捷：完整 API 集（pickup/speak/setTimer/entityChase/returnHome/ledger…） */
+  get api() {
+    return game?.api ?? null;
+  },
   /** 视觉调参：伙计朝向偏移微调（弧度），返回当前偏移 */
   tuneCompanion: (delta = 0) => companion?.adjustYawOffset(delta) ?? null,
-  /** 取证用：冻结/恢复伙计跟随（冻结后转身可见伙计） */
   setFollow: (v: boolean) => companion?.setFollowEnabled(v) ?? null,
-  /** 验证用：临时隐藏/显示伙计（像素差取证） */
   showCompanion: (v: boolean) => {
     if (companion) companion.root.visible = v;
     return v;
   },
   debugCompanion: () => companion?.debugInfo() ?? null,
   viewer: () => viewer,
-  /** 验证用：隐藏/显示世界点云（排查遮挡） */
   showWorld: (v: boolean) => {
     const s = worldSplat as { visible?: boolean } | null;
     if (s && 'visible' in s) s.visible = v;
     return v;
   },
-  /** 验证用：改世界纯色背景 */
   setBg: (hex: number) => {
     setViewerConfig(viewer, {
       pipeline: {

@@ -1,10 +1,15 @@
 # 长夜驿站 · 游戏工程
 
-《长夜驿站》可玩 Demo 的 web 运行时。脚手架阶段（2026-10-26）已实现：aholo-viewer
+《长夜驿站》可玩 Demo 的 web 运行时。脚手架（阶段二任务1）实现：aholo-viewer
 本地加载 3DGS 世界（N1 雾中松林废站）→ 包围盒推导初始机位 → 第一人称行走
-（WASD + 鼠标指针锁定，稀疏体素碰撞）→ 伙伴「伙计」随行（身后偏右 ~1.5m lerp
-跟随，Walk_Loop / Idle_Loop 双动画切换，合并自 Lux3D 产出的两份 GLB）。玩法
-循环（追逐、拾取、逃脱）是下一任务。
+（WASD + 鼠标指针锁定，稀疏体素碰撞）→ 伙伴「伙计」随行。
+
+**阶段二任务2（2026-10-26）：N1 教学夜完整玩法垂直切片**——一夜四阶段循环
+`标题/开场仪式 → 驿站晨间(2D) → 穿缝转场 → N1 下潜(3D) → 归航结算 → 夜谈 → 进度页`，
+含：4 分钟天亮倒计时、3 件战利品（贪婪回路：越深越值钱）、实体「闻声而动」（一招：
+循声而来/见影则追，queryRay 视线）、伙计系统（恐惧表迟滞/低语雷达/T 说话=大噪音/
+三原型台词池）、账单结算与账单卡（canvas 导出 PNG）、因果账本（localStorage，
+导演 agent 输入种子）、WebAudio 合成音效（零素材）。
 
 ## 命令
 
@@ -21,40 +26,63 @@ npm run voxel      # 从世界 PLY 本地生成体素碰撞数据 → public/ass
 
 ```
 src/
-  main.ts            装配：viewer 初始化（对齐官网 render-runtime）、加载、渲染循环、HUD、__game 调试 API
-  walk-controls.ts   第一人称控制器：定步长物理 + 体素碰撞（移植官方 walk-demo ViewerWalkMode）
-  collision.ts       稀疏体素碰撞场（官方 walk-demo VoxelCollision 移植，MIT）
-  companion.ts       伙计：loadGLTF + AnimationPlugin 蒙皮动画 + lerp 跟随
-  nav.ts             简化碰撞兜底数据（高度场，scripts/gen-nav-data.mjs 预计算）
-scripts/
-  merge-glb-animations.mjs  GLB 动画合并（零 API，本地字节搬运）
-  gen-voxel.mjs             体素碰撞生成（@manycore/aholo-splat-transform，本地 CPU）
-  gen-nav-data.mjs          高度场/包围盒预计算
-public/assets/              world-n1.spz / huoji.glb / collision.voxel-* / world-n1.nav.json
+  main.ts            装配：viewer 初始化、资产加载、渲染循环、__game 调试 API
+  walk-controls.ts   第一人称控制器：走/跑(Shift+体力)/蹲(C)步态 + 体素碰撞 + 噪音等级输出
+  collision.ts       稀疏体素碰撞场（官方 walk-demo VoxelCollision 移植，MIT；queryRay=视线检测）
+  companion.ts       伙计：GLB 蒙皮动画 + lerp 跟随 + 恐惧迟滞（fear 越高跟越紧反应越慢）
+  nav.ts             简化碰撞兜底数据（高度场）
+  game/              ---- N1 玩法垂直切片 ----
+    game.ts          游戏流状态机（Stage）+ 下潜玩法编排 + 事件（拾取/被抓/归航/门关）
+    config.ts        N1 配置：战利品点位/价值、账单、倒计时、实体参数（调关卡只动这里）
+    items.ts         战利品 + 归航之门视觉（基元占位，TODO(Lux3D 信物/门)）
+    entity.ts        实体「闻声而动」AI：游荡/循声/追击/抓捕 + LOS + 占位形体
+    hud.ts           下潜 HUD：倒计时/目标框/图鉴/操作栏/噪音体力条/暗角/恐惧染色
+    screens.ts       2D 屏幕流：标题仪式/晨间/穿缝转场/结算/夜谈/进度/暂停菜单/说话框
+    billcard.ts      今夜账单卡（DOM 卡 + canvas 重绘导出 PNG，传播物料 P1）
+    lines.ts         伙计台词池：3 原型 × 10 场景（≥16 条/原型）+ 夜谈按账本事件选池
+    ledger.ts        因果账本 localStorage（schema 见文件头注释，导演 agent 契约）
+    audio.ts         WebAudio 合成音效：拾取/心跳/门铃/穿缝/结算/被抓（零素材）
+    shapes.ts        手搓 UV 椭球几何（viewer 未导出 Sphere/Box 几何类）
+scripts/             （同脚手架）GLB 动画合并 / 体素生成 / 高度场预计算
+public/assets/       world-n1.spz / huoji.glb / collision.voxel-* / world-n1.nav.json
 ```
 
-调试 API（console）：`__game.state` / `setInput(f,s)` / `getPos()` / `setYaw()` /
-`turn()` / `setFollow(bool)`（冻结跟随取证）/ `showCompanion(bool)` / `showWorld(bool)` /
-`tuneCompanion(rad)`（伙计朝向微调）/ `viewer()`。URL 参数：`?up=-1` 对照世界翻转。
+## 玩法速查（N1 教学夜）
 
-## 关键事实（2026-10-26 脚手架验证）
+- 开场仪式（≤60s 可跳过）：掌柜名（默认无名掌柜）+ 伙计原型三选一（毒舌/胆小/神秘）。
+- 下潜 4:00：捡 灯油瓶(6文·浅)/铜灯笼(8文·中)/旧怀表(12文·深)，凑 20 文账单，
+  天亮门关前回门口按 E 归航。门关未归/被抓 = 丢当日战利品被抛回（不判死）。
+- 实体一招：闻声而动（跑>说话>走>蹲，拾取中噪）+ 视线 8m 内追击（手电开×2）。
+- 操作：WASD 走 / Shift 跑 / C 蹲 / E 拾取·推门 / F 手电 / T 说话（=大噪音）/ ESC 菜单。
+- 回响模式：进度页「再潜一次」——同一世界，战利品价值 ±2 文微变，账本继续记账。
 
-1. **N1 世界渲染空间是 +Y up**（不是 go/no-go 报告写的 OpenCV -Y up——该结论来自
-   翻转不敏感的黑屏测试；本次用 ?up 双向渲染 + studio 官方截图亮度梯度同号判定修正。
-   官方 quickstart 的 -Y up 说明仅适用于 bear.sog 等原始资产）。
-2. viewer npm 包 mesh/GLTF 渲染正常（一度误判为不渲染——实为取证机位永远背对
-   跟随中的伙计），wiring 照官方 walk-demo：`loadGLTF(buf, {textureLoader:
-   downloadTexture})` + `AnimationPlugin` + `bindSkinned`。
-3. vite 必须把 viewer 排除出预打包与 bundle（worker 相对路径），build 用
-   importmap + dist/vendor 方案。
+## 调试 API（console）
+
+`__game.state`（phase/fps/errors）/ `__game.night`（stage/倒计时/战利品/实体/恐惧/FTUE
+计时）/ `__game.goto(stage)`（title/morning/dive/settle/talk/progress 直达，验收入口）/
+`__game.api.*`（pickup/speak/setTimer/flash/entityChase/entityTeleport/showItems/
+itemPositions/setArchetype/returnHome/ledger/ledgerReset/sfx/hud）+ 脚手架期全集
+（setInput/setSprint/setCrouch/getPos/setYaw/turn/setCam/tuneCompanion/setFollow/
+showCompanion/showWorld/setBg/viewer/V3）。移动/拾取均可用 dispatchEvent 派发
+KeyboardEvent 驱动（注意带 `key` 与 `code` 两个字段）。URL 参数：`?debug=1` 显示技术
+HUD；`?up=-1` 世界翻转对照。
+
+## 关键事实（沿用脚手架结论）
+
+1. N1 世界渲染空间 +Y up；viewer npm 包 mesh/GLTF 渲染正常；vite 需 exclude viewer
+   （worker 相对路径），build 用 importmap + dist/vendor 方案。
+2. **viewer 未在模块层导出 Sphere/Box 等几何类**（只有命名空间内部），占位几何用
+   BufferGeometry+BufferAttribute 手搓（game/shapes.ts）。
+3. **实体不做体素胶囊推离**：实体胶囊(半径 0.34)比玩家(0.12)粗，会在走廊收窄段被
+   推力逐帧抵消移动（追击速度剩 ~10%）；实体用包围盒钳制+地面高度场，LOS 仍走
+   queryRay（2026-10-26 实测坑，详见 entity.ts 头注）。
+4. 手电效果：splat 不受场景灯影响，亮度用 CSS filter（brightness 1.32/0.84）+ 暗角
+   radial-gradient 切换实现；点光只影响 mesh（伙计/战利品/实体）。
 
 ## 已知限制（下一任务输入）
 
-- 伙计朝向按 glTF 惯例 +Z 前向假设，未目视确认是否倒退走（读图通道不可用）；
-  如倒退：`__game.tuneCompanion(Math.PI)` 后回填 companion.ts 的 modelYawAdjust。
-- 碰撞胶囊半径 0.12m/高 1.5m，走廊世界校准；复杂世界需调 voxelResolution。
-- 伙计不撞墙时可能贴走廊边（跟随目标钳制），无寻路。
-- 键盘/指针锁定在无头环境未测真实按键（go/no-go 已证键盘事件可消费）；GPU
-  环境实测 128fps。
-- 生产构建把 33MB huoji.glb 全量下发（含未压缩纹理），后续做 Draco/KTX2 压缩。
-- 伙计动画混合为线性权重，未做官方 demo 的 Fall/jump 状态。
+- 实体/信物/门全部为基元占位（代码内 TODO(Lux3D 实体/信物) 标记替换点）。
+- 实体不撞墙（半穿行，志怪皮遮掩）；伙计无寻路仍可能贴走廊边。
+- 账单卡 canvas 导出在中控台无头环境不落盘（真浏览器正常下载）。
+- 键盘/指针锁定已过 playwright 合成键验证；未做移动端触控。
+- 生产构建 33MB huoji.glb 全量下发；伙计动画混合为线性权重。
