@@ -145,6 +145,13 @@ export class Entity {
       .catch((e: unknown) => console.warn(`[实体] ${cfg.name} GLB 加载失败，保留占位:`, e));
   }
 
+  /** 世界就绪后重挂导航/碰撞：setNight 时 world.nav 可能还是上一夜的（按夜懒加载未完成），
+   *  实体会被旧 bbox 钳制、y 用旧地面场；beginDive 守卫（world=本夜）通过后调用本方法再 teleport。 */
+  retarget(nav: NavField, collision: VoxelCollision | null) {
+    this.nav = nav;
+    this.collision = collision;
+  }
+
   /** 噪音入口：听到 → 去看；高噪近距离 → 直接追 */
   hear(noise: NoiseEvent) {
     const d = Math.hypot(noise.x - this.pos.x, noise.z - this.pos.z);

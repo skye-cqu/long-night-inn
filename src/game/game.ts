@@ -282,6 +282,8 @@ export class Game {
 
     // 回响重玩：战利品价值微变（±echoJitter 文）——只看「本夜第几次潜」，换夜首潜不抖
     this.items.reset(this.nightRunCount > 0 ? def.echoJitter : 0);
+    // 世界已就绪（守卫通过）：实体重挂本夜导航/碰撞后再落位（修 setNight 时挂旧 nav 的跨夜残留）
+    this.entity.retarget(this.deps.world.nav, this.deps.world.collision);
     this.entity.teleport(def.entity.start.x, def.entity.start.z);
     this.entity.forceState('wander');
 

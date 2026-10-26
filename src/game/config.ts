@@ -234,9 +234,6 @@ export const N2: NightDef = {
   survivor: { enabled: true, x: -2.95, z: 1.05, glb: './assets/survivor.glb' },
 };
 
-/** 全部已配置夜（进度页/解锁链按此渲染） */
-export const NIGHTS: NightDef[] = [N1, N2];
-
 /** 第三夜「雪原 × 唐风夜市」——世界=world-n3（任务E3：一条 29–31m 主街沿 X + 北侧店铺
  * 廊道障碍带 + 死胡同凹槽 6 处 + 塌拱遮挡；中位截面 3.5/4.5m，走廊式尺度达标）。
  * 选点=过程留痕/2026-10-26/游戏工程-N3接入/plan-n3-points.mjs（体素 BFS + E3 硬规则：
@@ -316,6 +313,9 @@ export const N3: NightDef = {
   // N3 无幸存者遭遇（遭遇是 N2 机制槽；N3 只承接其回响）
   survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
 };
+
+/** 全部已配置夜（进度页/解锁链按此渲染） */
+export const NIGHTS: NightDef[] = [N1, N2, N3];
 
 /** 夜数中文序号（1→一） */
 export function nightCn(night: number): string {
