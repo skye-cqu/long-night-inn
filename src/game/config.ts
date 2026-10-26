@@ -52,6 +52,12 @@ export interface EntityDef {
   glb: string;
   /** 出生点（下潜开始 teleport 到此） */
   start: { x: number; z: number };
+  /** 强化演出（N3 起）：GLB 材质压暗系数 0..0.8（0=原样；材质叠加，不改几何） */
+  darken?: number;
+  /** 强化演出：红眼缩放倍率（>1 更大更亮；缺省 1） */
+  eyeBoost?: number;
+  /** 强化实体：首次进入追击时伙计说强化版台词（n3_chase 池） */
+  enhanced?: boolean;
 }
 
 /** 幸存者槽位（遭遇玩法 E2 接入；E1 只立 flag 与挂点，不生成） */
@@ -98,6 +104,19 @@ export interface NightDef {
   echoJitter: number;
   /** CSS 雾层强度 0..1（开阔地形补偿；0=无雾层，N1 保持原样） */
   fog: number;
+  /** 雾层色调：plain=灰蓝（N2）/ snow=雪雾白偏冷（N3，带缓漂移）；缺省 plain */
+  fogTint?: 'plain' | 'snow';
+  /** 暖光点（零新资产：主街两侧发光小球+点光；N3 雪夜灯笼暖光） */
+  warmLamps?: Array<{ x: number; z: number }>;
+  /** N2 选择回响锚点（N3 专用，世界坐标已过 plan-n3-points 硬规则验证） */
+  echoAnchors?: {
+    /** saved 谢礼灯笼（可拾取 +5 文） */
+    gift: { x: number; z: number };
+    /** robbed 寻仇残影游荡中心（不攻击） */
+    wraith: { x: number; z: number };
+    /** ignored 行李 / lost 半个油纸包（叙事物件，E 察看） */
+    relic: { x: number; z: number };
+  };
   /** 幸存者槽位（flag 先立着，玩法 E2 做） */
   survivor: SurvivorSlot;
 }
@@ -217,6 +236,86 @@ export const N2: NightDef = {
 
 /** 全部已配置夜（进度页/解锁链按此渲染） */
 export const NIGHTS: NightDef[] = [N1, N2];
+
+/** 第三夜「雪原 × 唐风夜市」——世界=world-n3（任务E3：一条 29–31m 主街沿 X + 北侧店铺
+ * 廊道障碍带 + 死胡同凹槽 6 处 + 塌拱遮挡；中位截面 3.5/4.5m，走廊式尺度达标）。
+ * 选点=过程留痕/2026-10-26/游戏工程-N3接入/plan-n3-points.mjs（体素 BFS + E3 硬规则：
+ * ①门=主导带 y≈2 外缘最远格（裸选会落到 y≈9 店铺顶）；②每个兴趣点柱与可站立柱同带面
+ * ——同带邻 ≥2 格 |Δfloor|≤0.45m，防 N2 式「两级地面相邻柱」坠穿（验收-N2夜 §五-1）；
+ * ③实体出生与门同带面（band 2，游荡区 75/103 格同带，按带验收）。
+ * 机制槽（设计 §7 N3）：实体强化（雾影同源 GLB，追速 3.5/侦测 10m/手电×2.5）
+ * + N2 选择回响首秀（§6 #25「世界记得你」——echo.ts 按账本 survivor 结局显形 ≥2 处回响）。 */
+export const N3: NightDef = {
+  night: 3,
+  seedName: '雪原 × 唐风夜市',
+  quest: {
+    title: '收灯人 · 灯油钱 40 文',
+    body: '「雪把夜市的吆喝声冻住了。今晚那条街上，有东西把你记住了——它比前两晚都饿。<br/>雪雾里散着唐市的旧物。四十文。天亮前回来。」',
+    sign: '—— 收灯人（没露脸）',
+  },
+  bill: 40,
+  diveSeconds: 240,
+  world: {
+    spz: './assets/world-n3.spz',
+    nav: './assets/world-n3.nav.json',
+    voxelMeta: './assets/collision-n3.voxel-meta.json',
+    voxelBin: './assets/collision-n3.voxel.bin',
+  },
+  // 门/出生=主街西端（门 BFS 0m，带面 2.4，同带邻 3 格）；yaw 朝街心浅点（atan2(-0.5,2.5)≈-0.2）
+  door: { x: -1.45, z: 0.75 },
+  doorReturnRadius: 1.5,
+  spawn: { x: -1.45, z: 0.75, yaw: -0.22 },
+  loot: [
+    // 门 BFS：浅 6.0m / 中 12.0m / 深 18.5m ↔ 10/12/18 文深度梯度；带面 2.3/1.7/3.3 均同带邻 ≥2
+    { id: 'oil', name: '封冻的灯油', value: 10, x: 2.55, z: -1.25, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
+    { id: 'lantern', name: '未点的红灯笼', value: 12, x: 7.55, z: -1.25, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
+    { id: 'watch', name: '当铺旧怀表', value: 18, x: 14.55, z: -0.75, color: 0xd8d8e0, glowColor: 0xfff2cc, shape: 'watch', glb: './assets/token-watch.glb' },
+  ],
+  pickupRadius: 1.6,
+  entity: {
+    name: '餍足的雾影',
+    // 游荡区=plan-n3-points 深度 >55% 区域 bbox（z 内收 0.2m 避开包围盒钳制缘）
+    wanderMin: { x: 6.3, z: -1.8 },
+    wanderMax: { x: 16.3, z: 2.3 },
+    wanderSpeed: 1.2,
+    investigateSpeed: 2.8,
+    chaseSpeed: 3.5, // 实体强化：比 N2 锈声者再快半步（跑 4.2 甩得掉，走 2.2 甩不掉）
+    sightRange: 10, // 侦测 10m（N1 8 / N2 9）
+    flashlightRangeMul: 2.5, // 手电 ×2.5（N1/N2 ×2）：雪夜开灯更危险
+    loseSightSeconds: 3.5,
+    catchRadius: 0.95,
+    noiseRadiusMax: 22,
+    chaseNoiseLevel: 0.85,
+    glb: './assets/entity-n1.glb', // N1 雾影同源 GLB（Lux3D 复用）；强化=材质压暗+红眼增亮（entity.ts applyNight）
+    start: { x: 12.05, z: 0.75 }, // 深段带面 1.8，与门同带（band 2），玩家必经带上
+    darken: 0.55,
+    eyeBoost: 1.4,
+    enhanced: true,
+  },
+  noise: { crouch: 0.08, walk: 0.35, sprint: 1.0, pickup: 0.55, speak: 1.0 },
+  whisper: { range: 20, interval: 8 },
+  fearRange: 12,
+  dangerSeconds: 60,
+  speed: { walk: 2.2, sprint: 4.2, crouch: 1.05 },
+  stamina: { max: 100, drainPerSec: 26, regenPerSec: 14, sprintMin: 20 },
+  echoJitter: 2,
+  fog: 0.42, // 雪雾白偏冷（fogTint='snow'），浓度低于 N2 0.55
+  fogTint: 'snow',
+  // 暖光点 ×3（主街两侧，plan-n3-points 硬规则验证带面 2.8/2.4/2.1）
+  warmLamps: [
+    { x: 1.05, z: 0.75 },
+    { x: 6.55, z: 0.75 },
+    { x: 12.05, z: -0.25 },
+  ],
+  // 回响锚点（门口 2–5m 主街段；带面 2.7/2.7/2.4 均同带邻 ≥2）
+  echoAnchors: {
+    gift: { x: 0.55, z: -1.25 },
+    wraith: { x: 5.55, z: -0.25 },
+    relic: { x: -0.45, z: -1.25 },
+  },
+  // N3 无幸存者遭遇（遭遇是 N2 机制槽；N3 只承接其回响）
+  survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
+};
 
 /** 夜数中文序号（1→一） */
 export function nightCn(night: number): string {
