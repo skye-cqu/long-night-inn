@@ -148,6 +148,12 @@ export class WalkControls {
     }
   }
 
+  /** 换夜：替换导航高度场与体素碰撞（新世界资产就绪后调用） */
+  setWorld(nav: NavField, collision: VoxelCollision | null) {
+    this.nav = nav;
+    this.collision = collision;
+  }
+
   // ---- 内部 ----
 
   private step(dt: number) {

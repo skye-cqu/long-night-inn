@@ -3,7 +3,7 @@
  * 标题/开场仪式 → 驿站晨间 → 穿缝转场 → （3D 下潜）→ 归航结算 → 夜谈 → 进度页，
  * 外加：暂停菜单、伙计说话框（T）、屏幕通用 AI 标识（合规红线常驻）。
  */
-import { ARCHETYPES, type Archetype } from './config';
+import { nightCn, ARCHETYPES, type Archetype, type NightDef } from './config';
 import type { Sfx } from './audio';
 import type { LedgerRecord } from './ledger';
 import { buildBillCardDom, saveBillCardPng, type BillCardData } from './billcard';
@@ -121,20 +121,20 @@ export class Screens {
     setTimeout(() => nameInput.focus(), 50);
   }
 
-  // ---- 驿站晨间（hub） ----
-  morning(records: LedgerRecord[], night: number, seedName: string, bill: number, onDive: () => void) {
+  // ---- 驿站晨间（hub，按夜配置渲染委托文案） ----
+  morning(records: LedgerRecord[], def: NightDef, onDive: () => void) {
     const scr = h('div', 'g-screen g-morning');
     scr.innerHTML = `
       <div class="g-hub-head">
-        <h2>驿站 · 第${'一二三四五六七'[night - 1] ?? night}夜之晨</h2>
-        <span class="g-hub-sub">今夜世界：${seedName}。灯还亮着，乱流在门外重新缝世界。</span>
+        <h2>驿站 · 第${nightCn(def.night)}夜之晨</h2>
+        <span class="g-hub-sub">今夜世界：${def.seedName}。灯还亮着，乱流在门外重新缝世界。</span>
       </div>
       <div class="g-hub-cols">
         <div class="g-quest">
           <div class="g-quest-tag">今晨委托</div>
-          <div class="g-quest-title">收灯人 · 灯油钱 ${bill} 文</div>
-          <p class="g-quest-body">「雾中松林废站里散着些旧物——灯油瓶、铜灯笼、还有块旧怀表。捡回来抵账。<br/>天亮门关前回来。回不来的，东西就归乱流。」</p>
-          <p class="g-quest-sign">—— 收灯人（没露脸）</p>
+          <div class="g-quest-title">${def.quest.title}</div>
+          <p class="g-quest-body">${def.quest.body}</p>
+          <p class="g-quest-sign">${def.quest.sign}</p>
         </div>
         <div class="g-ledger">
           <div class="g-quest-tag">因果账本</div>
@@ -150,7 +150,7 @@ export class Screens {
       </div>
     `;
     const row = h('div', 'g-btn-row center');
-    const dive = h('button', 'g-btn primary big', '推门下潜 · 第一夜');
+    const dive = h('button', 'g-btn primary big', `推门下潜 · 第${nightCn(def.night)}夜`);
     dive.onclick = () => {
       this.sfx.click();
       onDive();
@@ -160,43 +160,47 @@ export class Screens {
     this.mount(scr);
   }
 
-  // ---- 穿缝转场（噪点闪白 + 镜头推进，1.5–2.5s） ----
-  seam(onDone: () => void, seedName = '雾中松林废站') {
+  // ---- 穿缝转场（噪点闪白 + 镜头推进，2s；世界未就绪时延长等待，
+  //      超过 4s 显示「乱流缝合中…」进度文案，就绪即放行） ----
+  seam(onDone: () => void, def: Pick<NightDef, 'night' | 'seedName'>, ready: Promise<void>) {
     this.clear();
     const wrap = h('div', 'g-seam');
     const cvs = document.createElement('canvas');
     cvs.width = Math.min(innerWidth, 1280);
     cvs.height = Math.min(innerHeight, 800);
     wrap.append(cvs);
-    const label = h('div', 'g-seam-label', `第一夜 · ${seedName}`);
+    const label = h('div', 'g-seam-label', `第${nightCn(def.night)}夜 · ${def.seedName}`);
     wrap.append(label);
     this.box.append(wrap);
     this.current = wrap;
 
     const g = cvs.getContext('2d');
     const DURATION = 2000;
+    const WAIT_TEXT_AFTER = 4000; // 超出此时长显示乱流文案
     const t0 = performance.now();
-    const cell = 26;
-    const anim = () => {
-      const t = Math.min(1, (performance.now() - t0) / DURATION);
-      if (g) {
-        const W = cvs.width;
-        const H = cvs.height;
-        g.fillStyle = '#05060a';
-        g.fillRect(0, 0, W, H);
-        // 噪点方块，密度随时间上升
-        const density = 0.15 + t * 0.75;
-        const cs = Math.max(6, Math.round(cell * (1 - t * 0.55)));
-        for (let y = 0; y < H; y += cs) {
-          for (let x = 0; x < W; x += cs) {
-            if (Math.random() < density) {
-              const v = Math.random() < 0.5 ? 90 + Math.random() * 80 : 170 + Math.random() * 85;
-              g.fillStyle = `rgba(${v},${v},${v},${0.5 + Math.random() * 0.5})`;
-              g.fillRect(x, y, cs, cs);
-            }
+    let done = false;
+    let animDone = false;
+    const draw = (t: number, hold: boolean) => {
+      if (!g) return;
+      const W = cvs.width;
+      const H = cvs.height;
+      g.fillStyle = '#05060a';
+      g.fillRect(0, 0, W, H);
+      // 噪点方块，密度随时间上升（等待期保持湍流起伏）
+      const density = hold ? 0.45 + Math.sin(t0 + performance.now() * 0.004) * 0.2 : 0.15 + t * 0.75;
+      const cell = 26;
+      const cs = hold ? 10 : Math.max(6, Math.round(cell * (1 - t * 0.55)));
+      for (let y = 0; y < H; y += cs) {
+        for (let x = 0; x < W; x += cs) {
+          if (Math.random() < density) {
+            const v = Math.random() < 0.5 ? 90 + Math.random() * 80 : 170 + Math.random() * 85;
+            g.fillStyle = `rgba(${v},${v},${v},${0.5 + Math.random() * 0.5})`;
+            g.fillRect(x, y, cs, cs);
           }
         }
-        // 镜头推进：中心白洞收缩（穿缝）
+      }
+      // 镜头推进：中心白洞收缩（穿缝）——等待期不再推进
+      if (!hold) {
         const r = Math.max(W, H) * (1.15 - t * 1.05);
         const grad = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(1, r));
         grad.addColorStop(0, `rgba(255,250,235,${0.9 * t})`);
@@ -210,11 +214,33 @@ export class Screens {
           g.fillRect(0, 0, W, H);
         }
       }
-      if (t < 1) requestAnimationFrame(anim);
-      else {
-        this.clear();
-        onDone();
+    };
+    const finish = () => {
+      if (!animDone || done) return;
+      done = true;
+      this.clear();
+      onDone();
+    };
+    ready.then(finish, finish);
+    const anim = () => {
+      if (done) return;
+      const elapsed = performance.now() - t0;
+      const t = Math.min(1, elapsed / DURATION);
+      if (t < 1) {
+        draw(t, false);
+        requestAnimationFrame(anim);
+        return;
       }
+      animDone = true;
+      finish();
+      if (done) return;
+      // 世界未就绪：保持湍流等待；超时显示进度文案
+      if (elapsed > WAIT_TEXT_AFTER && !label.classList.contains('wait')) {
+        label.textContent = '乱流缝合中…';
+        label.classList.add('wait');
+      }
+      draw(1, true);
+      requestAnimationFrame(anim);
     };
     requestAnimationFrame(anim);
   }
@@ -264,44 +290,61 @@ export class Screens {
     this.mount(scr);
   }
 
-  // ---- 进度页 ----
-  progress(
-    onReplay: () => void,
-    onTitle: () => void,
-    sfxEnabled: boolean,
-    onToggleSfx: (v: boolean) => boolean,
-  ) {
+  // ---- 进度页（按 NIGHTS 配置 + localStorage 解锁链渲染） ----
+  progress(opts: {
+    nights: Array<Pick<NightDef, 'night' | 'seedName'>>;
+    unlockedNight: number;
+    paidNights: number[];
+    currentNight: number;
+    onReplay: () => void;
+    onNext: (night: number) => void;
+    onTitle: () => void;
+    sfxEnabled: boolean;
+    onToggleSfx: (v: boolean) => boolean;
+  }) {
+    const CN = '壹贰叁肆伍陆柒捌玖';
     const scr = h('div', 'g-screen g-progress');
+    const rows = opts.nights
+      .map((def) => {
+        const paid = opts.paidNights.includes(def.night);
+        const unlocked = def.night <= opts.unlockedNight;
+        const cls = paid ? 'done' : unlocked ? 'dev' : 'lock';
+        const state = paid ? '已付一夜' : unlocked ? '已解锁 · 可下潜' : '待解锁';
+        const name = unlocked ? def.seedName : '未潜入';
+        return `<div class="g-night ${cls}"><span class="n-num">${CN[def.night - 1] ?? def.night}</span><span class="n-name">${name}</span><span class="n-state">${state}</span></div>`;
+      })
+      .join('');
     scr.innerHTML = `
       <h2>七夜 · 进度</h2>
-      <div class="g-nights">
-        <div class="g-night done"><span class="n-num">壹</span><span class="n-name">雾中松林废站</span><span class="n-state">已付一夜</span></div>
-        <div class="g-night dev"><span class="n-num">贰</span><span class="n-name">水墨江南 × 锈蚀废土</span><span class="n-state">开发中</span></div>
-        ${[3, 4, 5, 6, 7]
-          .map(
-            (i) =>
-              `<div class="g-night lock"><span class="n-num">${'叁肆伍陆柒'[i - 3]}</span><span class="n-name">未潜入</span><span class="n-state">待解锁</span></div>`,
-          )
-          .join('')}
-      </div>
+      <div class="g-nights">${rows}</div>
       <div class="g-prog-note">七夜七张账单付清 = 通关。付不起 = 灯暗一分，不判死档。</div>
     `;
     const row = h('div', 'g-btn-row center');
-    const replay = h('button', 'g-btn primary', `再潜一次 第一夜（回响）`);
+    const nextNight = opts.currentNight + 1;
+    const hasNext = nextNight <= opts.unlockedNight && opts.nights.some((n) => n.night === nextNight);
+    if (hasNext) {
+      const next = h('button', 'g-btn primary', `推门 · 进入第${nightCn(nextNight)}夜`);
+      next.onclick = () => {
+        this.sfx.click();
+        opts.onNext(nextNight);
+      };
+      row.append(next);
+    }
+    const replay = h('button', 'g-btn ghost', `再潜一次 第${nightCn(opts.currentNight)}夜（回响）`);
     replay.onclick = () => {
       this.sfx.click();
-      onReplay();
+      opts.onReplay();
     };
     const back = h('button', 'g-btn ghost', '回到标题');
     back.onclick = () => {
       this.sfx.click();
-      onTitle();
+      opts.onTitle();
     };
-    const snd = h('button', 'g-btn ghost', `音效：${sfxEnabled ? '开' : '关'}`);
-    let sndOn = sfxEnabled;
+    const snd = h('button', 'g-btn ghost', `音效：${opts.sfxEnabled ? '开' : '关'}`);
+    let sndOn = opts.sfxEnabled;
     snd.onclick = () => {
       sndOn = !sndOn;
-      onToggleSfx(sndOn);
+      opts.onToggleSfx(sndOn);
       snd.textContent = `音效：${sndOn ? '开' : '关'}`;
     };
     row.append(replay, snd, back);

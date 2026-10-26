@@ -83,3 +83,27 @@ export class Ledger {
     save(this.records);
   }
 }
+
+// ---- 夜进度（解锁链，localStorage）----
+// 结算即解锁下一夜（灯暗一分不判死档，见设计 §3）；进度页按此渲染 N1✓ N2(解锁) N3+(置灰)。
+
+const UNLOCKED_KEY = 'long-night-inn:unlocked-night:v1';
+
+export function loadUnlockedNight(): number {
+  try {
+    const raw = localStorage.getItem(UNLOCKED_KEY);
+    const n = raw ? Number.parseInt(raw, 10) : 1;
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function saveUnlockedNight(night: number) {
+  try {
+    const cur = loadUnlockedNight();
+    if (night > cur) localStorage.setItem(UNLOCKED_KEY, String(night));
+  } catch {
+    /* localStorage 不可用时静默降级（本次会话内存态仍可用） */
+  }
+}

@@ -82,6 +82,11 @@ export class Companion {
     this.lights.add(fill as never);
   }
 
+  /** 换夜：替换导航高度场（贴地/钳制用，模型与动画不动） */
+  setNav(nav: NavField) {
+    this.nav = nav;
+  }
+
   async load(url: string, viewer: Viewer, scene: Scene3D) {
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`fetch huoji.glb HTTP ${resp.status}`);

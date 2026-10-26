@@ -9,7 +9,7 @@
  * - 恐惧染色：实体逼近时红色内晕随恐惧表加深
  * 全部 DOM/CSS 实现（水墨暗色风），不占渲染预算。
  */
-import type { LootDef } from './config';
+import { nightCn, type LootDef, type NightDef } from './config';
 
 /** 图鉴占位字标（TODO(Lux3D 信物)：替换为信物 GLB 缩略图） */
 const ICONS: Record<string, string> = { bottle: '瓶', lantern: '灯', watch: '表' };
@@ -25,6 +25,8 @@ export class Hud {
   readonly root: HTMLElement;
   private goal: HTMLElement;
   private countdown: HTMLElement;
+  private nightLabel: HTMLElement;
+  private codexRow: HTMLElement;
   private codexSlots: Array<{ slot: HTMLElement; val: HTMLElement }> = [];
   private noiseFill: HTMLElement;
   private staminaFill: HTMLElement;
@@ -35,6 +37,8 @@ export class Hud {
   private vignette: HTMLElement;
   private fearTint: HTMLElement;
   private flashEl: HTMLElement;
+  private fogEl: HTMLElement;
+  private fogLevel = 0;
   private app: HTMLElement;
   private bubbleTimer: number | null = null;
 
@@ -45,7 +49,8 @@ export class Hud {
 
     // 左上：目标框
     const goalBox = el('div', 'g-goal');
-    goalBox.append(el('div', 'g-goal-night', '第一夜 · 雾中松林废站'));
+    this.nightLabel = el('div', 'g-goal-night', '第一夜 · 雾中松林废站');
+    goalBox.append(this.nightLabel);
     this.goal = el('div', 'g-goal-bill');
     goalBox.append(this.goal);
     goalBox.append(el('div', 'g-goal-hint', '天亮门关前，带着值钱物回门口'));
@@ -58,18 +63,10 @@ export class Hud {
     // 左下：图鉴
     const codex = el('div', 'g-codex');
     codex.append(el('div', 'g-codex-title', '今夜图鉴'));
-    const row = el('div', 'g-codex-row');
-    for (const def of defs) {
-      const slot = el('div', 'g-codex-slot');
-      slot.append(el('div', 'g-codex-icon', ICONS[def.shape] ?? '物'));
-      slot.append(el('div', 'g-codex-name', def.name));
-      const val = el('div', 'g-codex-val', `${def.value} 文`);
-      slot.append(val);
-      this.codexSlots.push({ slot, val });
-      row.append(slot);
-    }
-    codex.append(row);
+    this.codexRow = el('div', 'g-codex-row');
+    codex.append(this.codexRow);
     this.root.append(codex);
+    this.buildCodex(defs);
 
     // 底部中间：操作栏
     const bar = el('div', 'g-keys');
@@ -116,20 +113,50 @@ export class Hud {
     this.bubbleEl.append(this.bubbleArch, this.bubbleText);
     this.root.append(this.bubbleEl);
 
-    // 暗角 + 恐惧染色 + 黑屏闪（全屏层）
+    // 暗角 + 恐惧染色 + 黑屏闪（全屏层）+ 雾层（开阔夜补偿，opacity=setFog）
+    this.fogEl = el('div', 'g-fog');
     this.vignette = el('div', 'g-vig');
     this.fearTint = el('div', 'g-fear');
     this.flashEl = el('div', 'g-flash');
-    uiRoot.append(this.vignette, this.fearTint, this.flashEl, this.root);
+    uiRoot.append(this.fogEl, this.vignette, this.fearTint, this.flashEl, this.root);
+  }
+
+  /** 换夜：夜标签 + 图鉴重建 + 雾强度（下潜 HUD 显示时生效） */
+  setNight(def: NightDef) {
+    this.nightLabel.textContent = `第${nightCn(def.night)}夜 · ${def.seedName}`;
+    this.buildCodex(def.loot);
+    this.fogLevel = def.fog;
+    this.applyFog();
+  }
+
+  /** 按信物表重建图鉴格 */
+  private buildCodex(defs: LootDef[]) {
+    this.codexRow.innerHTML = '';
+    this.codexSlots = [];
+    for (const def of defs) {
+      const slot = el('div', 'g-codex-slot');
+      slot.append(el('div', 'g-codex-icon', ICONS[def.shape] ?? '物'));
+      slot.append(el('div', 'g-codex-name', def.name));
+      const val = el('div', 'g-codex-val', `${def.value} 文`);
+      slot.append(val);
+      this.codexSlots.push({ slot, val });
+      this.codexRow.append(slot);
+    }
   }
 
   show(v: boolean) {
     this.root.style.display = v ? '' : 'none';
+    this.applyFog();
     if (!v) {
       this.setVignette('off');
       this.setFear(0);
       this.setPrompt(null);
     }
+  }
+
+  /** 雾层只在下潜 HUD 显示时生效 */
+  private applyFog() {
+    this.fogEl.style.opacity = this.root.style.display === 'none' ? '0' : String(this.fogLevel);
   }
 
   setCountdown(secLeft: number, danger: boolean) {

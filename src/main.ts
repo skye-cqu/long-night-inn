@@ -1,10 +1,12 @@
 /**
  * main.ts — 《长夜驿站》装配：aholo-viewer 渲染 SPZ 世界 + GLB 伙计 + 第一人称行走，
- * 委托给 src/game/ 的玩法状态机（阶段二：N1 教学夜完整玩法垂直切片）。
+ * 委托给 src/game/ 的玩法状态机（阶段三起：多夜配置化，按 NightDef 懒加载世界）。
  *
  * - viewer 初始化复用脚手架已跑通的 wiring（Scene3D + setScene、禁用 gizmo/culling）。
- * - up 约定：N1 世界（Aholo World API 输出）渲染空间为 +Y up（?up=1/?up=-1 亮度梯度
+ * - up 约定：N1/N2 世界（Aholo World API 输出）渲染空间为 +Y up（?up=1/?up=-1 亮度梯度
  *   A/B 判定，2026-10-26）；?up=-1 仅作世界侧对照调试。
+ * - 换夜：loadNightWorld(def) 拉取该夜 spz/体素/nav，换 splat 并原地更新 world 句柄
+ *   （controls/companion/game 同步换导航与碰撞）。
  * - 调试：?debug=1 显示左上角技术 HUD；window.__game 见文件尾部。
  */
 import {
@@ -22,7 +24,8 @@ import { buildNavField, type NavData } from './nav';
 import { WalkControls } from './walk-controls';
 import { loadVoxelCollision } from './collision';
 import { Companion } from './companion';
-import { Game } from './game/game';
+import { Game, type WorldHandle } from './game/game';
+import { NIGHTS, type NightDef } from './game/config';
 
 const { parseSplatData, detectSplatFileType, SplatFileType } = SplatLoader;
 const { createSplat } = SplatUtils;
@@ -118,17 +121,64 @@ let companion: Companion | null = null;
 let game: Game | null = null;
 let worldSplat: unknown = null;
 
-// ---- 世界与伙计加载（标题页期间后台进行） ----
+/** 世界运行时句柄（Game 只读；换夜时本模块原地更新字段） */
+const world: WorldHandle = { nav: null as never, collision: null, night: 0 };
+
+/** 按夜懒加载世界资产：换 splat + 换导航/碰撞（同夜并发请求合并） */
+let loadingNight: { night: number; promise: Promise<void> } | null = null;
+function loadNightWorld(def: NightDef): Promise<void> {
+  if (world.night === def.night) return Promise.resolve();
+  if (loadingNight && loadingNight.night === def.night) return loadingNight.promise;
+  const promise = (async () => {
+    state.phase = 'load-night' + def.night;
+    const navResp = await fetch(def.world.nav);
+    if (!navResp.ok) throw new Error('fetch nav HTTP ' + navResp.status);
+    const navData = (await navResp.json()) as NavData;
+
+    const resp = await fetch(def.world.spz);
+    if (!resp.ok) throw new Error('fetch spz HTTP ' + navResp.status);
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+
+    state.phase = 'parse-world';
+    const type = detectSplatFileType('world.spz', bytes) ?? SplatFileType.SPZ;
+    const data = await parseSplatData(type, bytes);
+    const splat = await createSplat(data);
+
+    // 换世界：旧 splat 摘除、新 splat 上场（世界对象由 GC/引擎处置）
+    if (worldSplat) gameScene.remove(worldSplat as never);
+    gameScene.add(splat as never);
+    gameScene.notifySceneChange?.();
+    worldSplat = splat;
+
+    const nav = buildNavField(navData, upSign);
+    const collision = await loadVoxelCollision(def.world.voxelMeta, def.world.voxelBin);
+    state.collision = collision ? 'voxel' : 'nav-fallback';
+    controls?.setWorld(nav, collision);
+    companion?.setNav(nav);
+    world.nav = nav;
+    world.collision = collision;
+    world.night = def.night;
+    state.phase = 'ready';
+  })();
+  loadingNight = { night: def.night, promise };
+  promise.finally(() => {
+    if (loadingNight && loadingNight.promise === promise) loadingNight = null;
+  });
+  return promise;
+}
+
+// ---- 世界与伙计加载（标题页期间后台进行；N1 启动即载） ----
 const T0 = performance.now();
 (async () => {
   try {
+    const def1 = NIGHTS[0]!;
     state.phase = 'load-nav';
-    const navResp = await fetch('./assets/world-n1.nav.json');
+    const navResp = await fetch(def1.world.nav);
     if (!navResp.ok) throw new Error('fetch nav HTTP ' + navResp.status);
     const navData = (await navResp.json()) as NavData;
 
     state.phase = 'fetch-world';
-    const resp = await fetch('./assets/world-n1.spz');
+    const resp = await fetch(def1.world.spz);
     if (!resp.ok) throw new Error('fetch spz HTTP ' + resp.status);
     const bytes = new Uint8Array(await resp.arrayBuffer());
 
@@ -146,8 +196,11 @@ const T0 = performance.now();
 
     const nav = buildNavField(navData, upSign);
     state.phase = 'load-collision';
-    const collision = await loadVoxelCollision('./assets/collision.voxel-meta.json', './assets/collision.voxel.bin');
+    const collision = await loadVoxelCollision(def1.world.voxelMeta, def1.world.voxelBin);
     state.collision = collision ? 'voxel' : 'nav-fallback';
+    world.nav = nav;
+    world.collision = collision;
+    world.night = def1.night;
     controls = new WalkControls(container, nav, collision);
     controls.setRuntimeEnabled(false); // 标题页阶段禁输入
 
@@ -159,8 +212,8 @@ const T0 = performance.now();
     // 玩法状态机（标题页在资产就绪后弹出；标题遮挡期间世界已在后台加载完毕）
     game = new Game({
       scene: gameScene,
-      nav,
-      collision,
+      world,
+      loadNightWorld,
       controls,
       companion,
       appContainer: container,
@@ -226,7 +279,7 @@ function loop(t: number) {
 // ---- 自动化 / 调试接口 ----
 (window as never as Record<string, unknown>).__game = {
   get state() {
-    return { ...state, stage: game?.stage ?? null, errors: [...errors] };
+    return { ...state, stage: game?.stage ?? null, night: world.night, errors: [...errors] };
   },
   get night() {
     return game?.debug ?? null;
@@ -248,6 +301,8 @@ function loop(t: number) {
   },
   /** 阶段直达：title/morning/dive/settle/talk/progress */
   goto: (stage: string) => (game as unknown as { goto(s: string): void })?.goto(stage as never),
+  /** 夜直达（1 起算）：换配置回晨间，世界后台加载；配合 goto('dive') 冒烟 */
+  enterNight: (n: number) => game?.enterNight(n) ?? null,
   /** 验收快捷：完整 API 集（pickup/speak/setTimer/entityChase/returnHome/ledger…） */
   get api() {
     return game?.api ?? null;

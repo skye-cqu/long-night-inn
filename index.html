@@ -134,6 +134,14 @@
       position: fixed; inset: 0; z-index: 16; pointer-events: none; opacity: 0; transition: opacity 0.4s;
       background: radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(120,10,10,0.35) 90%, rgba(90,0,0,0.6) 100%);
     }
+    /* 雾层（开阔夜补偿，opacity=NightDef.fog；只在下潜 HUD 显示时生效） */
+    .g-fog {
+      position: fixed; inset: 0; z-index: 14; pointer-events: none; opacity: 0; transition: opacity 1.4s;
+      background:
+        linear-gradient(180deg, rgba(150,160,178,0.28) 0%, rgba(150,160,178,0) 22%),
+        radial-gradient(ellipse at center, rgba(150,160,178,0.10) 30%, rgba(140,150,170,0.42) 68%, rgba(120,132,152,0.8) 100%);
+      mix-blend-mode: screen;
+    }
     .g-flash { position: fixed; inset: 0; z-index: 40; background: #000; opacity: 0; pointer-events: none; }
 
     /* ===== 2D 屏幕流 ===== */
@@ -224,6 +232,7 @@
       text-shadow: 0 0 24px rgba(232,226,212,0.55); animation: seam-in 2s ease-out;
     }
     @keyframes seam-in { 0% { opacity: 0; letter-spacing: 24px; } 40% { opacity: 1; } 100% { opacity: 0.9; letter-spacing: 12px; } }
+    .g-seam-label.wait { color: var(--dim); font-size: 20px; letter-spacing: 6px; animation: g-pulse 1.6s infinite; }
 
     .g-settle-lamp { font-family: KaiTi, STKaiti, serif; font-size: 19px; letter-spacing: 2px; }
     .g-settle-lamp.ok { color: var(--green); }

@@ -1,16 +1,21 @@
 /**
- * items.ts — N1 世界内兴趣物：3 件战利品 + 归航之门。
+ * items.ts — 世界内兴趣物：战利品（按夜配置）+ 归航之门。
  *
- * 视觉=viewer(three 系)基元占位（发光小物件：基元 + 跟随点光 + 旋转浮动）。
- * // TODO(Lux3D 信物)：img/text-to-3D 产出 GLB 后按 LootDef.id 替换占位几何
- *   （灯油瓶/铜灯笼/旧怀表各一件，跨幕信物直接复用 id）。
+ * 视觉源：Lux3D 信物 GLB（token-*.glb，按 LootDef.glb 懒加载，归一化到 ~0.35m
+ * 悬浮于 floorAt+1.0）；加载失败 console.warn 并保留椭球占位。旋转浮动 + 跟随
+ * 点光 + E 拾取 + 图鉴逻辑不变。
  * // TODO(Lux3D 门)：归航门的实体形态（当前为暖光柱占位）。
  */
-import { Mesh, MeshPhongMaterial, Object3D, PointLight, Vector3 } from '@manycore/aholo-viewer';
+import { Box3, GLTFLoader, Mesh, MeshPhongMaterial, Object3D, PointLight, Vector3, downloadTexture } from '@manycore/aholo-viewer';
 import type { Scene3D } from '@manycore/aholo-viewer';
 import type { LootDef } from './config';
 import type { NavField } from '../nav';
 import { sphereGeometry } from './shapes';
+
+const { loadGLTF } = GLTFLoader;
+
+/** 信物视觉尺寸（包围盒最大边归一化目标，米） */
+const TOKEN_SIZE = 0.35;
 
 export interface LootItem {
   def: LootDef;
@@ -21,35 +26,70 @@ export interface LootItem {
   value: number; // 回响模式会微调
 }
 
+/** 拉取 GLB 并按包围盒归一化到目标尺寸、居中到原点（悬浮+旋转的锚点） */
+async function loadGlbNormalized(url: string, size: number): Promise<Object3D> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`fetch ${url} HTTP ${resp.status}`);
+  const buffer = await resp.arrayBuffer();
+  const result = await loadGLTF(buffer, { textureLoader: downloadTexture });
+  const model = result.scene as unknown as Object3D;
+  model.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(model as never);
+  const dim = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
+  model.scale.setScalar(size / Math.max(1e-6, dim));
+  model.updateMatrixWorld(true);
+  const b2 = new Box3().setFromObject(model as never);
+  model.position.x -= (b2.min.x + b2.max.x) * 0.5;
+  model.position.y -= (b2.min.y + b2.max.y) * 0.5;
+  model.position.z -= (b2.min.z + b2.max.z) * 0.5;
+  return model;
+}
+
 /** 拾取后可重置（回响重玩用） */
 export class WorldItems {
   readonly loot: LootItem[] = [];
   readonly doorRoot = new Object3D();
   readonly doorPos: Vector3;
   private doorBaseY = 0;
+  private scene: Scene3D;
 
   constructor(scene: Scene3D, nav: NavField, defs: LootDef[], door: { x: number; z: number }) {
+    this.scene = scene;
     for (const def of defs) {
       const root = new Object3D();
       const floorY = nav.floorAt(def.x, def.z);
       const baseY = floorY + 1.0;
       root.position.set(def.x, baseY, def.z);
 
-      // TODO(Lux3D 信物)：占位几何按 shape 分型（瓶=竖长椭球/灯笼=球+顶环/怀表=扁盒）
+      // 占位几何（GLB 就绪前/失败时的视觉兜底）：瓶=竖长椭球/灯笼=球+顶环/怀表=扁盒
+      const placeholder = new Object3D();
       const geo = sphereGeometry(18, 14);
       const mat = new MeshPhongMaterial({ color: def.color, shininess: 80 });
       const mesh = new Mesh(geo, mat);
       if (def.shape === 'bottle') mesh.scale.set(0.72, 1.55, 0.72);
       else if (def.shape === 'watch') mesh.scale.set(1.05, 0.3, 1.05);
       else mesh.scale.set(1, 1, 1);
-      root.add(mesh as never);
+      placeholder.add(mesh as never);
 
       if (def.shape === 'lantern') {
         // 灯笼顶环（扁球）
         const halo = new Mesh(sphereGeometry(12, 8), new MeshPhongMaterial({ color: def.glowColor, shininess: 60 }));
         halo.scale.set(1, 0.28, 1);
         halo.position.y = 0.26;
-        root.add(halo as never);
+        placeholder.add(halo as never);
+      }
+      root.add(placeholder as never);
+
+      // Lux3D 信物 GLB：异步替换占位（失败保留占位 + console.warn）
+      if (def.glb) {
+        loadGlbNormalized(def.glb, TOKEN_SIZE)
+          .then((model) => {
+            if (item.taken) return;
+            root.remove(placeholder as never);
+            root.add(model as never);
+            this.scene.notifySceneChange?.();
+          })
+          .catch((e: unknown) => console.warn(`[信物] ${def.id} GLB 加载失败，保留占位:`, e));
       }
 
       // 跟随点光（照亮伙计/实体等 mesh；splat 自身亮度由 CSS 侧处理）
@@ -57,7 +97,8 @@ export class WorldItems {
       root.add(light as never);
 
       scene.add(root as never);
-      this.loot.push({ def, root, pos: new Vector3(def.x, baseY, def.z), baseY, taken: false, value: def.value });
+      const item: LootItem = { def, root, pos: new Vector3(def.x, baseY, def.z), baseY, taken: false, value: def.value };
+      this.loot.push(item);
     }
 
     // 归航之门：暖光柱占位
@@ -74,6 +115,13 @@ export class WorldItems {
     this.doorRoot.add(doorLight as never);
     this.doorRoot.position.set(door.x, this.doorBaseY, door.z);
     scene.add(this.doorRoot as never);
+    scene.notifySceneChange?.();
+  }
+
+  /** 换夜重建前：把本夜世界物从场景摘除 */
+  dispose(scene: Scene3D) {
+    for (const item of this.loot) scene.remove(item.root as never);
+    scene.remove(this.doorRoot as never);
     scene.notifySceneChange?.();
   }
 

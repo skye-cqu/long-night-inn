@@ -1,22 +1,26 @@
 /**
- * entity.ts — N1 实体「闻声而动」（一招：循声而来，见影则追）。
+ * entity.ts — 实体「闻声而动」（一招：循声而来，见影则追）。行为 AI 四态
+ * （wander/investigate/linger/chase）跨夜共用，数值按 NightDef.entity 配置。
  *
  * 行为（全部可学习——好玩五律第 2 条）：
- * - 平时在走廊深处游荡；
+ * - 平时在深处游荡；
  * - 噪音事件（奔跑>说话>走路>蹲行，拾取中噪）把它吸引到噪音点（investigate）；
- * - 对玩家有视线（体素 queryRay）且距离 <8m（手电开 ×2），或近距离听到高噪（跑/喊）→ 追击；
- * - 追击速度 3.1m/s：快于走(2.2)、慢于跑(4.2)——想活命得跑，想跑得远省体力；
- * - 抓到 = 玩家丢当日战利品被拖回门口（「笑看死亡」，不判死）；抓住后实体回深处饱食冷却。
+ * - 对玩家有视线（体素 queryRay）且距离 <sightRange（手电开 ×2），或近距离听到高噪
+ *   （跑/喊）→ 追击；
+ * - 追到 = 玩家丢当日战利品被拖回门口（「笑看死亡」，不判死）；抓住后回深处饱食冷却。
  *
- * 视觉占位：深黑半透明拉长胶囊（拉长椭球）+ 双红眼 + 跟随点光。
- * // TODO(Lux3D 实体)：text-to-3D 产出「缝坏的账物」形体（行为种子决定形态）后替换。
+ * 视觉源：Lux3D 实体 GLB（entity-n1.glb / entity-n2.glb，按夜懒加载，归一化 ~2.2m，
+ * 包围盒中心对齐原点），叠两个小发光球当红眼 + 跟随点光；加载失败 console.warn
+ * 并保留深黑半透明拉长椭球占位。
  */
-import { Mesh, MeshPhongMaterial, Object3D, PointLight, Vector3 } from '@manycore/aholo-viewer';
+import { Box3, GLTFLoader, Mesh, MeshPhongMaterial, Object3D, PointLight, Vector3, downloadTexture } from '@manycore/aholo-viewer';
 import type { Scene3D } from '@manycore/aholo-viewer';
 import type { VoxelCollision } from '../collision';
 import type { NavField } from '../nav';
-import type { N1Config } from './config';
+import type { EntityDef } from './config';
 import { sphereGeometry } from './shapes';
+
+const { loadGLTF } = GLTFLoader;
 
 export type EntityState = 'wander' | 'investigate' | 'chase' | 'linger';
 
@@ -34,7 +38,27 @@ export interface EntityTick {
   state: EntityState;
 }
 
-const ENTITY_HEIGHT = 2.2; // 拉长胶囊视觉高
+/** 实体视觉高（米），GLB 与占位椭球都按此归一化 */
+const ENTITY_HEIGHT = 2.2;
+
+/** 拉取实体 GLB：归一化到 ENTITY_HEIGHT、包围盒中心对齐原点（root 锚在高度中点） */
+async function loadEntityGlb(url: string): Promise<Object3D> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`fetch ${url} HTTP ${resp.status}`);
+  const buffer = await resp.arrayBuffer();
+  const result = await loadGLTF(buffer, { textureLoader: downloadTexture });
+  const model = result.scene as unknown as Object3D;
+  model.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(model as never);
+  const h = Math.max(1e-6, box.max.y - box.min.y);
+  model.scale.setScalar(ENTITY_HEIGHT / h);
+  model.updateMatrixWorld(true);
+  const b2 = new Box3().setFromObject(model as never);
+  model.position.x -= (b2.min.x + b2.max.x) * 0.5;
+  model.position.y -= (b2.min.y + b2.max.y) * 0.5;
+  model.position.z -= (b2.min.z + b2.max.z) * 0.5;
+  return model;
+}
 
 export class Entity {
   readonly root = new Object3D();
@@ -45,29 +69,34 @@ export class Entity {
 
   private nav: NavField;
   private collision: VoxelCollision | null;
-  private cfg: N1Config['entity'];
+  private cfg: EntityDef;
   private target = { x: 0, z: 0 };
   private lingerT = 0;
   private noLosT = 0;
   private lastSeen: { x: number; z: number } | null = null;
-  private body: Mesh;
+  /** 视觉容器（脉动缩放作用于此；内含占位椭球或 GLB 模型） */
+  private visual = new Object3D();
+  private placeholder: Object3D;
   private eyeL: Mesh;
   private eyeR: Mesh;
   private light: PointLight;
   private tAcc = 0;
 
-  constructor(scene: Scene3D, nav: NavField, collision: VoxelCollision | null, cfg: N1Config['entity'], start: { x: number; z: number }) {
+  constructor(scene: Scene3D, nav: NavField, collision: VoxelCollision | null, cfg: EntityDef) {
     this.nav = nav;
     this.collision = collision;
     this.cfg = cfg;
 
-    // TODO(Lux3D 实体)：占位形体——深黑半透明拉长椭球
-    this.body = new Mesh(
+    // 占位形体：深黑半透明拉长椭球（GLB 就绪前/失败时的视觉兜底）
+    const body = new Mesh(
       sphereGeometry(18, 14),
       new MeshPhongMaterial({ color: 0x05070a, transparent: true, opacity: 0.72, shininess: 30 }),
     );
-    this.body.scale.set(0.68, ENTITY_HEIGHT / 1.0, 0.68);
-    this.root.add(this.body as never);
+    body.scale.set(0.68, ENTITY_HEIGHT / 1.0, 0.68);
+    this.placeholder = new Object3D();
+    this.placeholder.add(body as never);
+    this.visual.add(this.placeholder as never);
+    this.root.add(this.visual as never);
 
     const eyeMat = new MeshPhongMaterial({ color: 0xff2a1a, shininess: 120 });
     this.eyeL = new Mesh(sphereGeometry(8, 6), eyeMat);
@@ -84,8 +113,25 @@ export class Entity {
     scene.add(this.root as never);
     scene.notifySceneChange?.();
 
-    this.pos.set(start.x, nav.floorAt(start.x, start.z) + ENTITY_HEIGHT * 0.5, start.z);
+    this.pos.set(cfg.start.x, nav.floorAt(cfg.start.x, cfg.start.z) + ENTITY_HEIGHT * 0.5, cfg.start.z);
     this.pickWanderTarget();
+  }
+
+  /** 换夜：更新参数/导航/碰撞并异步换 GLB 视觉（行为四态逻辑不动） */
+  applyNight(nav: NavField, collision: VoxelCollision | null, cfg: EntityDef, scene: Scene3D) {
+    this.nav = nav;
+    this.collision = collision;
+    this.cfg = cfg;
+    this.state = 'wander';
+    this.teleport(cfg.start.x, cfg.start.z);
+    this.pickWanderTarget();
+    loadEntityGlb(cfg.glb)
+      .then((model) => {
+        this.visual.remove(this.placeholder as never);
+        this.visual.add(model as never);
+        scene.notifySceneChange?.();
+      })
+      .catch((e: unknown) => console.warn(`[实体] ${cfg.name} GLB 加载失败，保留占位:`, e));
   }
 
   /** 噪音入口：听到 → 去看；高噪近距离 → 直接追 */
@@ -116,6 +162,7 @@ export class Entity {
 
   get debug() {
     return {
+      name: this.cfg.name,
       state: this.state,
       pos: { x: +this.pos.x.toFixed(2), y: +this.pos.y.toFixed(2), z: +this.pos.z.toFixed(2) },
       target: { x: +this.target.x.toFixed(2), z: +this.target.z.toFixed(2) },
@@ -198,7 +245,7 @@ export class Entity {
     const chasing = this.state === 'chase';
     const pulse = chasing ? 0.12 : 0.05;
     const s = 1 + Math.sin(now * (chasing ? 9 : 3)) * pulse;
-    this.body.scale.set(0.68 * s, (ENTITY_HEIGHT / 1.0) * (chasing ? 1.05 : s), 0.68 * s);
+    this.visual.scale.set(s, chasing ? 1.05 : s, s);
     this.light.intensity = chasing ? 1.8 : 0.9;
     const eyeScale = chasing ? 1.5 : 1;
     this.eyeL.scale.setScalar(eyeScale);
