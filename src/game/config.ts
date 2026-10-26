@@ -68,6 +68,28 @@ export interface SurvivorSlot {
   glb: string;
 }
 
+/** 黑暗理智（N4 恐惧表机制强化，设计 §3.6「手电=看得见但招实体；关灯=安全但看不清」落地） */
+export interface SanityDef {
+  /** 黑暗区半径（米）：手电关且离最近暖光点（灯笼×3+归航门暖光柱）超过该距离=黑暗区 */
+  darkRadius: number;
+  /** 黑暗区内每秒扣减（理智 0..100） */
+  drainPerSec: number;
+  /** 低于该值：屏幕边缘水波纹暗角 + 伙计慌（台词池） */
+  lowThreshold: number;
+  /** 理智归零：实体无视视线/距离追击该秒数（「你的呼吸声在黑暗里传得很远」） */
+  blackoutBlindSeconds: number;
+  /** 归零惩罚结束后理智回弹值 */
+  blackoutRecover: number;
+}
+
+/** 住客回归（N4，§6 #26 常客系统首秀） */
+export interface GuestDef {
+  /** 「古镇银铃」落点：主街最深处死胡同凹室（plan-n4-points.mjs 硬规则验证，两种住客集都刷） */
+  bell: { x: number; z: number };
+  /** 银铃价值（文），图鉴系列第 5 格（N2 油纸包=第 4 格之后） */
+  bellValue: number;
+}
+
 export interface NightDef {
   night: number;
   seedName: string;
@@ -104,10 +126,16 @@ export interface NightDef {
   echoJitter: number;
   /** CSS 雾层强度 0..1（开阔地形补偿；0=无雾层，N1 保持原样） */
   fog: number;
-  /** 雾层色调：plain=灰蓝（N2）/ snow=雪雾白偏冷（N3，带缓漂移）；缺省 plain */
-  fogTint?: 'plain' | 'snow';
-  /** 暖光点（零新资产：主街两侧发光小球+点光；N3 雪夜灯笼暖光） */
+  /** 雾层色调：plain=灰蓝（N2）/ snow=雪雾白偏冷（N3，带缓漂移）/ deepsea=水下青雾（N4）；缺省 plain */
+  fogTint?: 'plain' | 'snow' | 'deepsea';
+  /** 暖光点（零新资产：主街两侧发光小球+点光；N3 雪夜灯笼暖光；N4 兼作黑暗理智的「灯下安全区」锚） */
   warmLamps?: Array<{ x: number; z: number }>;
+  /** 悬浮微尘粒子（N4 深海氛围，three Points ≤200 点零贴图；缺省关） */
+  dust?: boolean;
+  /** 黑暗理智（N4 恐惧表机制强化，设计 §3.6 噪音/光照槽；缺省=不启用，N1–N3 零变化） */
+  sanity?: SanityDef;
+  /** 住客回归（N4，§6 #26 常客系统首秀；缺省=不启用） */
+  guest?: GuestDef;
   /** N2 选择回响锚点（N3 专用，世界坐标已过 plan-n3-points 硬规则验证） */
   echoAnchors?: {
     /** saved 谢礼灯笼（可拾取 +5 文） */
@@ -314,8 +342,93 @@ export const N3: NightDef = {
   survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
 };
 
+/** 第四夜「深海 × 灯笼古镇」——世界=world-n4（任务E5 第 2 笔，worldId 3FO4K4QHI28T，
+ * 平台标签 outdoor(Beta)：渲染/碰撞实测通过见 N4接入验收记录）。44m 竖向场景，
+ * E5 的顶向下 nav 被灯笼 canopy 截胡（主带 y≈23.6）不可用；本夜 nav 用
+ * scripts/gen-nav-n4.mjs「底向上定带 y≈-3、带内选面」修正版重生成
+ * （主块 973→606 格但带面纯净：全部落在 -4.4..-1.6，无 canopy/摊顶混入）。
+ * 选点=过程留痕/2026-10-26/游戏工程-N4接入/plan-n4-points.mjs（体素 BFS + E3 硬规则
+ * 同款：门/兴趣点主导带 ±0.6m、同带邻 ≥2 格 |Δfloor|≤0.45m；死胡同凹室放宽为
+ * 「全部可走邻同带」——端点天然 ≤1 邻）。
+ * 机制槽（设计 §7 N4）：住客回归（§6 #26 常客系统首秀，guest.ts 按 N2 账本结局分岔）
+ * + 黑暗理智（恐惧表机制强化，§3.6 噪音/光照槽落地：手电关+离灯>6m 每秒 -2，
+ * <30 水波纹暗角+伙计慌，归零=实体盲追 10s+回 30）。
+ * 实体=雾影同源 GLB（entity-n1.glb，不压暗——深海青雾已压视野），追速 3.3/侦测 9m，
+ * 手电侦测 ×1.5（N3 ×2.5→回落：青雾里开灯是「看得见 vs 招实体」的理智天平，不是纯危险）。 */
+export const N4: NightDef = {
+  night: 4,
+  seedName: '深海 × 灯笼古镇',
+  quest: {
+    title: '收灯人 · 灯油钱 45 文',
+    body: '「今晚乱流把一条街沉进了海底——灯笼在水里亮着，衣裳却不湿。青雾深处散着古镇的旧物。<br/>四十五文。那街上的东西，听得见你的喘息。」',
+    sign: '—— 收灯人（没露脸）',
+  },
+  bill: 45,
+  diveSeconds: 240,
+  world: {
+    spz: './assets/world-n4.spz',
+    nav: './assets/world-n4.nav.json',
+    voxelMeta: './assets/collision-n4.voxel-meta.json',
+    voxelBin: './assets/collision-n4.voxel.bin',
+  },
+  // 门/出生=主街东端（plan-n4-points 主导带外缘最远格，带面 -3.1 同带邻 3）；朝街心浅点（西偏北）
+  door: { x: 14.45, z: 2.25 },
+  doorReturnRadius: 1.5,
+  spawn: { x: 14.45, z: 2.25, yaw: -2.68 },
+  loot: [
+    // 门 BFS：浅 10.5m / 中 21.5m / 深 31m ↔ 12/14/20 文深度梯度；带面 -2.8/-2.1/-2.7 均同带邻 ≥2
+    { id: 'oil', name: '沉船旧灯油', value: 12, x: 7.45, z: -1.25, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
+    { id: 'lantern', name: '水浸的纸灯笼', value: 14, x: -3.05, z: -1.75, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
+    { id: 'watch', name: '当铺防水怀表', value: 20, x: -12.05, z: -1.25, color: 0xd8d8e0, glowColor: 0xfff2cc, shape: 'watch', glb: './assets/token-watch.glb' },
+  ],
+  pickupRadius: 1.6,
+  entity: {
+    name: '沉底的雾影',
+    // 游荡区=plan-n4-points 深度 >55% 主街段 bbox（z 内收 0.2m 避开包围盒钳制缘；
+    // 不含南侧银铃凹室——深处拾荒时给玩家留一条无实体走廊）
+    wanderMin: { x: -16.1, z: -2.3 },
+    wanderMax: { x: -0.5, z: 2.3 },
+    wanderSpeed: 1.2,
+    investigateSpeed: 2.8,
+    chaseSpeed: 3.3, // 雾影同源：与 N2 锈声者同速（跑 4.2 甩得掉，走 2.2 甩不掉）
+    sightRange: 9, // 侦测 9m（N2 同值；N1 8 / N3 10）
+    flashlightRangeMul: 1.5, // 手电 ×1.5（N1/N2 ×2、N3 ×2.5）：N4 天平在理智条，不在纯侦测惩罚
+    loseSightSeconds: 4,
+    catchRadius: 0.95,
+    noiseRadiusMax: 22,
+    chaseNoiseLevel: 0.85,
+    glb: './assets/entity-n1.glb', // 雾影同源 GLB（Lux3D 复用，零新资产）；不压暗（青雾+黑暗理智承担压迫感）
+    start: { x: -9.05, z: -1.75 }, // 深段带面 -2.7，与门同主导带（y≈-3），玩家必经带上
+  },
+  noise: { crouch: 0.08, walk: 0.35, sprint: 1.0, pickup: 0.55, speak: 1.0 },
+  whisper: { range: 20, interval: 8 },
+  fearRange: 12,
+  dangerSeconds: 60,
+  speed: { walk: 2.2, sprint: 4.2, crouch: 1.05 },
+  stamina: { max: 100, drainPerSec: 26, regenPerSec: 14, sprintMin: 20 },
+  echoJitter: 2,
+  fog: 0.5, // 水下青雾（fogTint='deepsea' 冷青偏色，浓度介于 N2 0.55 与 N3 0.42 之间）
+  fogTint: 'deepsea',
+  dust: true, // 悬浮微尘/气泡粒子（three Points ≤200 点，零贴图零新资产）
+  // 暖光点 ×3（主街沿深度 25%/50%/75%，plan-n4-points 硬规则验证带面 -3.2/-2.1/-2.8；
+  // 兼作黑暗理智「灯下安全区」锚，归航门暖光柱为第 4 锚——出生/归航必在灯下）
+  warmLamps: [
+    { x: 9.45, z: -1.75 },
+    { x: 0.45, z: -1.75 },
+    { x: -7.55, z: -1.25 },
+  ],
+  // 黑暗理智（§3.6）：黑暗区=手电关且离暖光点>6m；-2/s；<30 水波纹暗角+伙计慌；
+  // 归零=实体无视视线盲追 10s（「你的呼吸声在黑暗里传得很远」）+理智回 30
+  sanity: { darkRadius: 6, drainPerSec: 2, lowThreshold: 30, blackoutBlindSeconds: 10, blackoutRecover: 30 },
+  // 住客回归（§6 #26）：银铃落点=主街最深处死胡同凹室（带面 -2.9，全邻同带，
+  // 门 BFS 30.5m——「主街最深处有件好东西」的实体承诺，两种住客集都刷，值 12 文）
+  guest: { bell: { x: -10.55, z: 2.75 }, bellValue: 12 },
+  // N4 无幸存者遭遇（遭遇是 N2 机制槽；N4 承接其住客回归）
+  survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
+};
+
 /** 全部已配置夜（进度页/解锁链按此渲染） */
-export const NIGHTS: NightDef[] = [N1, N2, N3];
+export const NIGHTS: NightDef[] = [N1, N2, N3, N4];
 
 /** 夜数中文序号（1→一） */
 export function nightCn(night: number): string {
