@@ -54,8 +54,17 @@ export class WorldItems {
   private scene: Scene3D;
   /** 暖光点（N3 雪夜灯笼暖光，零新资产：发光小球+点光） */
   private lampsRoot: Object3D | null = null;
+  /** 封路口碎石堆（N6：物理封路盒的视觉锚，基元零新资产） */
+  private barriersRoot: Object3D | null = null;
 
-  constructor(scene: Scene3D, nav: NavField, defs: LootDef[], door: { x: number; z: number }, lamps?: Array<{ x: number; z: number }>) {
+  constructor(
+    scene: Scene3D,
+    nav: NavField,
+    defs: LootDef[],
+    door: { x: number; z: number },
+    lamps?: Array<{ x: number; z: number }>,
+    barriers?: Array<{ x0: number; x1: number; z0: number; z1: number }>,
+  ) {
     this.scene = scene;
     for (const def of defs) {
       const root = new Object3D();
@@ -138,6 +147,35 @@ export class WorldItems {
       scene.add(this.lampsRoot as never);
       this.scene.notifySceneChange?.();
     }
+
+    // 封路口碎石堆（N6 落差口：§11.1「物理封路+生成装饰」的装饰半边——沿封路盒长轴
+    // 摆 1–4 颗滚石基元（灰褐岩色、随机压扁），读作「塌下来的碎块堵住了缺口」；
+    // 隐形墙本体在 walk-controls.resolveBarriers，视觉与碰撞共用同一 NightDef.barriers）
+    if (barriers && barriers.length) {
+      this.barriersRoot = new Object3D();
+      for (const b of barriers) {
+        const alongX = b.x1 - b.x0 >= b.z1 - b.z0;
+        const len = alongX ? b.x1 - b.x0 : b.z1 - b.z0;
+        const n = Math.max(1, Math.min(4, Math.round(len / 0.9)));
+        for (let i = 0; i < n; i++) {
+          const t = n === 1 ? 0.5 : 0.18 + (0.64 * i) / (n - 1);
+          const px = alongX ? b.x0 + len * t : (b.x0 + b.x1) / 2;
+          const pz = alongX ? (b.z0 + b.z1) / 2 : b.z0 + len * t;
+          const gy = nav.floorAt(px, pz);
+          const rock = new Mesh(
+            sphereGeometry(10, 8),
+            new MeshPhongMaterial({ color: 0x6f675c, shininess: 8 }),
+          );
+          const s = 0.3 + Math.random() * 0.22;
+          rock.scale.set(s, s * (0.55 + Math.random() * 0.25), s);
+          rock.position.set(px, gy + rock.scale.y * 0.7, pz);
+          rock.rotation.y = Math.random() * Math.PI;
+          this.barriersRoot.add(rock as never);
+        }
+      }
+      scene.add(this.barriersRoot as never);
+      this.scene.notifySceneChange?.();
+    }
   }
 
   /** 换夜重建前：把本夜世界物从场景摘除 */
@@ -147,6 +185,10 @@ export class WorldItems {
     if (this.lampsRoot) {
       scene.remove(this.lampsRoot as never);
       this.lampsRoot = null;
+    }
+    if (this.barriersRoot) {
+      scene.remove(this.barriersRoot as never);
+      this.barriersRoot = null;
     }
     scene.notifySceneChange?.();
   }

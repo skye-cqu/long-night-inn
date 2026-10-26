@@ -154,6 +154,7 @@ function loadNightWorld(def: NightDef): Promise<void> {
     const collision = await loadVoxelCollision(def.world.voxelMeta, def.world.voxelBin);
     state.collision = collision ? 'voxel' : 'nav-fallback';
     controls?.setWorld(nav, collision);
+    controls?.setBarriers(def.barriers ?? []); // 物理封路（N6 落差口隐形墙；缺省空=无）
     companion?.setNav(nav);
     world.nav = nav;
     world.collision = collision;

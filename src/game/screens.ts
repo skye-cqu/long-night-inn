@@ -7,6 +7,7 @@ import { nightCn, ARCHETYPES, type Archetype, type NightDef } from './config';
 import type { Sfx } from './audio';
 import type { LedgerRecord } from './ledger';
 import { buildBillCardDom, saveBillCardPng, type BillCardData } from './billcard';
+import type { MirrorView } from './mirror';
 
 function h(tag: string, cls?: string, html?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -268,6 +269,28 @@ export class Screens {
       requestAnimationFrame(anim);
     };
     requestAnimationFrame(anim);
+  }
+
+  // ---- 镜像对照页（N6 核心 wow：归航后、结算前，「世界记得你的总和」） ----
+  mirror(view: MirrorView, onContinue: () => void) {
+    const scr = h('div', 'g-screen g-mirror');
+    const rows = view.rows
+      .map((r) => `<div class="g-mirror-row"><span class="mr-left">${r.left}</span><span class="mr-sep">↔</span><span class="mr-right">${r.right}</span></div>`)
+      .join('');
+    scr.innerHTML = `
+      <h2>世界记得你的总和</h2>
+      <div class="g-mirror-sub">乱流合上了你的账本，照着它缝完这一夜。</div>
+      <div class="g-mirror-rows">${rows}</div>
+    `;
+    const row = h('div', 'g-btn-row center');
+    const next = h('button', 'g-btn primary', '继续走向第七夜');
+    next.onclick = () => {
+      this.sfx.click();
+      onContinue();
+    };
+    row.append(next);
+    scr.append(row);
+    this.mount(scr);
   }
 
   // ---- 归航结算（账单卡） ----

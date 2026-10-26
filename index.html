@@ -178,6 +178,20 @@
       from { transform: translate3d(0, 0, 0) scale(1.02); }
       to { transform: translate3d(1.5%, 0.4%, 0) scale(1.05); }
     }
+    /* 冷热双色带（N6 镜像夜·冰园×烬园：半冷冰蓝半暖烬橙的渐变雾层，缓漂移=两界拉锯） */
+    .g-fog.dualband {
+      background:
+        linear-gradient(100deg,
+          rgba(120,164,214,0.34) 0%, rgba(120,164,214,0.10) 34%,
+          rgba(120,164,214,0.05) 46%, rgba(224,138,66,0.05) 54%,
+          rgba(224,138,66,0.10) 66%, rgba(228,144,72,0.34) 100%),
+        radial-gradient(ellipse at center, rgba(150,150,170,0.08) 30%, rgba(130,140,160,0.34) 68%, rgba(60,66,84,0.7) 100%);
+      animation: dualband-drift 28s ease-in-out infinite alternate;
+    }
+    @keyframes dualband-drift {
+      from { transform: translate3d(0, 0, 0) scale(1.02); }
+      to { transform: translate3d(-1.6%, 0, 0) scale(1.05); }
+    }
     /* 黑暗理智低值水波纹暗角（N4）：层叠环形波纹+暗角，缓慢缩放呼吸（CSS 零新资产） */
     .g-mad {
       position: fixed; inset: 0; z-index: 17; pointer-events: none;
@@ -350,6 +364,23 @@
     /* N4 住客夜谈段（旅人 · 住客）：青玉色边 */
     .g-talk-guest { border-color: rgba(143, 212, 138, 0.5); background: rgba(143, 212, 138, 0.06); }
     .g-talk-guest .g-talk-arch { color: var(--green); }
+
+    /* ===== 镜像对照页（N6：世界记得你的总和）===== */
+    .g-mirror-sub { color: var(--dim); letter-spacing: 4px; font-family: KaiTi, "STKaiti", serif; }
+    .g-mirror-rows { display: flex; flex-direction: column; gap: 22px; margin: 26px 0 10px; }
+    .g-mirror-row {
+      display: flex; align-items: center; gap: 18px; justify-content: center;
+      font-family: KaiTi, "STKaiti", serif; font-size: 22px; letter-spacing: 2px;
+      animation: echo-in 1.4s ease-out;
+    }
+    .g-mirror-row:nth-child(2) { animation-delay: 0.35s; opacity: 0; animation-fill-mode: forwards; }
+    .g-mirror-row:nth-child(3) { animation-delay: 0.7s; opacity: 0; animation-fill-mode: forwards; }
+    .mr-left { color: var(--paper); text-shadow: 0 0 18px rgba(232,226,212,0.2); }
+    .mr-sep {
+      color: var(--dim); font-size: 16px; padding: 0 4px;
+      border-top: 1px dashed rgba(138,147,166,0.4); border-bottom: 1px dashed rgba(138,147,166,0.4);
+    }
+    .mr-right { color: var(--gold); text-shadow: 0 0 22px rgba(201,168,107,0.35); }
 
     .g-nights { display: grid; grid-template-columns: repeat(4, 150px); gap: 12px; }
     .g-night {

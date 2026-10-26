@@ -33,6 +33,15 @@ const STAMINA_SPRINT_MIN = 20; // 低于此值强制回走，恢复过 20 才能
 
 export type Gait = 'walk' | 'sprint' | 'crouch';
 
+/** 物理封路盒（N6 高台 8m 落差口，§11.1 隐形墙；xz AABB，y 向全高有效）。
+ *  结构最小化：与 NightDef.barriers 字段同形，避免本文件反向依赖 config。 */
+export interface BarrierBox {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+}
+
 export interface PlayerState {
   position: Vector3;
   yaw: number;
@@ -65,6 +74,8 @@ export class WalkControls {
   private accumulator = 0;
   private collision: VoxelCollision | null;
   private nav: NavField;
+  /** 物理封路盒（N6 落差口隐形墙；空=无） */
+  private barriers: BarrierBox[] = [];
   private container: HTMLElement;
   private enabled = false;
   /** 文本输入模式（伙计说话框聚焦时）：吞掉移动键，不 preventDefault */
@@ -154,6 +165,11 @@ export class WalkControls {
     this.collision = collision;
   }
 
+  /** 换夜：替换物理封路盒（隐形墙；缺省空=无，N1–N5 零变化） */
+  setBarriers(list: BarrierBox[]) {
+    this.barriers = list;
+  }
+
   // ---- 内部 ----
 
   private step(dt: number) {
@@ -189,7 +205,38 @@ export class WalkControls {
     } else {
       this.stepSimplified(dt, targetX, targetZ);
     }
+    this.resolveBarriers();
     this.speed = Math.hypot(this.velocity.x, this.velocity.z);
+  }
+
+  /** 物理封路（N6 高台落差口）：玩家胶囊水平推出封路盒外（沿最浅穿入轴），
+   *  并清掉指向盒内的速度分量防抖。只作用水平位置——体素墙照旧、实体不受限
+   *  （实体是「乱流缝坏的东西」半穿行，见 entity.ts moveTo 注）。 */
+  private resolveBarriers() {
+    const r = CAPSULE_RADIUS + 0.05;
+    for (const b of this.barriers) {
+      const px = this.position.x;
+      const pz = this.position.z;
+      if (px <= b.x0 - r || px >= b.x1 + r || pz <= b.z0 - r || pz >= b.z1 + r) continue;
+      const dl = px - (b.x0 - r);
+      const dr = b.x1 + r - px;
+      const dn = pz - (b.z0 - r);
+      const ds = b.z1 + r - pz;
+      const m = Math.min(dl, dr, dn, ds);
+      if (m === dl) {
+        this.position.x = b.x0 - r;
+        if (this.velocity.x < 0) this.velocity.x = 0;
+      } else if (m === dr) {
+        this.position.x = b.x1 + r;
+        if (this.velocity.x > 0) this.velocity.x = 0;
+      } else if (m === dn) {
+        this.position.z = b.z0 - r;
+        if (this.velocity.z < 0) this.velocity.z = 0;
+      } else {
+        this.position.z = b.z1 + r;
+        if (this.velocity.z > 0) this.velocity.z = 0;
+      }
+    }
   }
 
   /** 体素碰撞路径（官方 ViewerWalkMode 同法：地面弹簧/重力 + 胶囊推离） */

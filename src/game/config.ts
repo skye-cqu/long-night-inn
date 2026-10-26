@@ -138,6 +138,11 @@ export interface NightDef {
   tagline?: string;
   /** 本夜伙计开场台词池（≥2 条，beginDive 随机抽一条；缺省=按伙计原型通用开场池） */
   openingLines?: string[];
+  /** 物理封路 AABB（N6 高台 8m 落差口，§11.1 隐形墙）：xz 包围盒，y 向不限（高台全高有效）。
+   *  行走控制器把玩家胶囊水平推出盒外；视觉碎石堆由 items.ts 按同一盒摆基元。缺省=无 */
+  barriers?: Array<{ x0: number; x1: number; z0: number; z1: number }>;
+  /** 镜像对照页（N6）：归航后、结算前插入「世界记得你的总和」DOM 页（读全部账本统计拼装） */
+  mirrorPage?: boolean;
   /** 暖光点（零新资产：主街两侧发光小球+点光；N3 雪夜灯笼暖光；N4 兼作黑暗理智的「灯下安全区」锚） */
   warmLamps?: Array<{ x: number; z: number }>;
   /** 悬浮微尘粒子（N4 深海氛围，three Points ≤200 点零贴图；缺省关） */
@@ -532,8 +537,102 @@ export const N5: NightDef = {
   survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
 };
 
+/** 第六夜「冰园 × 烬园」（镜像夜）——世界=world-n6（任务E8，worldId 3FO4K4QHFXO7，
+ * 297,504 点，15.1min 一次成，平台命名「冰火走廊迷宫」）。E8 实测双层口袋花园：
+ * 高台 y≈9.5–10（4×5m 主行面）+ 沉降 L 步道 y≈1–2（西缘+南缘），高差约 8m；
+ * 顶向下 nav 把两层面混作一层（85% 可走为假象）。接入前经 scripts/gen-nav-band.mjs
+ * 锚定高台层 y∈[7,12] 带限（留 67 格剔 27 格，globalFloor→10；E8「高台锚定、沉降
+ * L 步道不可行」）。选点=plan-n6-points.mjs（plan-n4 硬规则同款）：高台主块 67 格
+ * 单块、主导带 y≈10、门 (1.95,-1.75) 带面 9.6 同带邻 2、深处石窟 (-1.05,2.75) BFS 7.5m。
+ * 封路口（plan-n6-points 落差口检测）：38 处开放落差合并 12 条线段→NightDef.barriers
+ * 隐形碰撞墙 AABB（行走控制器水平推出）+ items.ts 按同盒摆碎石堆基元（§11.1 物理封路），
+ * 坠落软复位（nav 最低可站面≈9.3-5）兜底仍在。
+ * 机制槽（设计 §7 N6）＝镜像夜：实体强化顶点（镜影=雾影同源压暗+红眼，追速 3.6/
+ * 侦测 11m/手电 ×2.5）、账单 70 文（信物 18/22/30 合计恰 70——满捡零被抓才付得清，
+ * 「世界呈现你的总和」的账目闭环）、账单卡「镜像夜」字样、冷热双色带雾层
+ * （fogTint='dualband' 半冷半暖 CSS 渐变）、镜像对照页（mirrorPage：归航后结算前
+ * 「世界记得你的总和」DOM 页，读全部账本 saved/robbed/ignored/lost/caught 计数拼装）。 */
+export const N6: NightDef = {
+  night: 6,
+  seedName: '冰园 × 烬园',
+  quest: {
+    title: '收灯人 · 灯油钱 70 文',
+    body: '「今晚乱流不缝别处了——它照着你的账本缝了一座园子：一半结着冰，一半烧着烬。<br/>你在账本上写下的每一笔，今晚都长着一张脸看你。七十文，一次没被抓住才付得清。<br/>走完这一夜，去看看你缝出了什么。」',
+    sign: '—— 收灯人（没露脸）',
+  },
+  bill: 70,
+  diveSeconds: 240,
+  world: {
+    spz: './assets/world-n6.spz',
+    nav: './assets/world-n6.nav.json',
+    voxelMeta: './assets/collision-n6.voxel-meta.json',
+    voxelBin: './assets/collision-n6.voxel.bin',
+  },
+  // 门/出生=高台东北角（plan-n6-points 主导带外缘最远格，带面 9.6 同带邻 2）；朝深处的西南石窟
+  door: { x: 1.95, z: -1.75 },
+  doorReturnRadius: 1.5,
+  spawn: { x: 1.95, z: -1.75, yaw: 2.16 },
+  loot: [
+    // 门 BFS：浅 2m / 中 4m / 深 6.5m ↔ 18/22/30 文（合计恰 70=账单：镜像夜的账目闭环）
+    { id: 'oil', name: '凝霜的灯油', value: 18, x: -0.05, z: -1.75, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
+    { id: 'lantern', name: '余烬里铜灯', value: 22, x: -1.05, z: -0.75, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
+    { id: 'watch', name: '冰封的怀表', value: 30, x: -1.05, z: 1.75, color: 0xd8d8e0, glowColor: 0xfff2cc, shape: 'watch', glb: './assets/token-watch.glb' },
+  ],
+  pickupRadius: 1.6,
+  entity: {
+    name: '镜影',
+    // 游荡区=高台主块 bbox 内收（67 格 4×5m 台面；plan-n6-points）
+    wanderMin: { x: -1.5, z: -1.7 },
+    wanderMax: { x: 1.9, z: 2.7 },
+    wanderSpeed: 1.2,
+    investigateSpeed: 2.9,
+    chaseSpeed: 3.6, // 强化顶点：七夜最快（跑 4.2 仍甩得掉，但窗口最窄）
+    sightRange: 11, // 侦测 11m（N3 10 之上再进一步；4×5m 台面上几乎处处可及）
+    flashlightRangeMul: 2.5, // 手电 ×2.5（与 N3/N5 持平）
+    loseSightSeconds: 3.5,
+    catchRadius: 0.95,
+    noiseRadiusMax: 22,
+    chaseNoiseLevel: 0.85,
+    glb: './assets/entity-n1.glb', // 雾影同源 GLB（Lux3D 复用，零新资产）；「你自己的影子」
+    start: { x: -1.05, z: 2.75 }, // 深处石窟（BFS 7.5m，离门最远的死胡同端点）：玩家落台有一拍喘息
+    darken: 0.6, // 强化演出：镜影=被压到近乎全黑的「你」
+    eyeBoost: 1.5,
+    enhanced: true, // 首进追击说强化版台词（n3_chase 池「它记住你了」——镜像夜的原样复用）
+  },
+  noise: { crouch: 0.08, walk: 0.35, sprint: 1.0, pickup: 0.55, speak: 1.0 },
+  whisper: { range: 20, interval: 8 },
+  fearRange: 12,
+  dangerSeconds: 60,
+  speed: { walk: 2.2, sprint: 4.2, crouch: 1.05 },
+  stamina: { max: 100, drainPerSec: 26, regenPerSec: 14, sprintMin: 20 },
+  echoJitter: 2,
+  fog: 0.5, // 冷热双色带（fogTint='dualband'）：半冷冰蓝半暖烬橙的 CSS 渐变雾层
+  fogTint: 'dualband',
+  tagline: '镜像夜',
+  // 账单卡上的「镜像夜」+ 归航后结算前的镜像对照页（world 记得你的总和）
+  mirrorPage: true,
+  // 物理封路（§11.1）：plan-n6-points 落差口检测 38 处开放落差合并 12 条线段的隐形墙 AABB
+  // （向落差侧外扩 0.5m、向台面内收 0.15m，厚度与玩家胶囊半径匹配）；视觉碎石堆同盒摆基元
+  barriers: [
+    { x0: -2.3, x1: -1.65, z0: -2, z1: -1 },
+    { x0: -1.8, x1: 2.2, z0: -2.5, z1: -1.85 },
+    { x0: 2.05, x1: 2.7, z0: -2, z1: 2.5 },
+    { x0: -1.8, x1: -1.3, z0: -1.15, z1: -0.5 },
+    { x0: -1.8, x1: -1.15, z0: -1, z1: 1.5 },
+    { x0: -2.3, x1: -1.65, z0: 1.5, z1: 2 },
+    { x0: -1.8, x1: -1.3, z0: 1.85, z1: 2.5 },
+    { x0: -1.8, x1: -1.3, z0: 1, z1: 1.65 },
+    { x0: -1.8, x1: -1.15, z0: 2, z1: 3 },
+    { x0: -0.8, x1: 2.2, z0: 2.35, z1: 3 },
+    { x0: -0.95, x1: -0.3, z0: 2.5, z1: 3 },
+    { x0: -1.3, x1: -0.8, z0: 2.85, z1: 3.5 },
+  ],
+  // N6 无幸存者遭遇（遭遇是 N2 机制槽；N6 承接的是全部账本的总和）
+  survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
+};
+
 /** 全部已配置夜（进度页/解锁链按此渲染） */
-export const NIGHTS: NightDef[] = [N1, N2, N3, N4, N5];
+export const NIGHTS: NightDef[] = [N1, N2, N3, N4, N5, N6];
 /** 夜数中文序号（1→一） */
 export function nightCn(night: number): string {
   return '一二三四五六七八九'[night - 1] ?? String(night);

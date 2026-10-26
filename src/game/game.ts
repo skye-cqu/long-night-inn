@@ -14,6 +14,7 @@ import { WorldItems, type LootItem } from './items';
 import { Entity } from './entity';
 import { Survivor } from './survivor';
 import { Echo, readEchoKind, ECHO_MORNING, ECHO_RELIC_TEXT, pickEchoTalk, type EchoKind } from './echo';
+import { buildMirrorView, mirrorSummary, readMirrorStats } from './mirror';
 import { DustField } from './atmosphere';
 import { Guest, readGuestSaved, GUEST_CARD, GUEST_INNKEEPER_INTEL, pickGuestTalk } from './guest';
 import { Hud } from './hud';
@@ -24,7 +25,7 @@ import type { VoxelCollision } from '../collision';
 import type { NavColumn, NavField } from '../nav';
 import type { Object3D, Scene3D, Viewer, Vector3 } from '@manycore/aholo-viewer';
 
-export type Stage = 'boot' | 'title' | 'morning' | 'seam' | 'dive' | 'settle' | 'talk' | 'progress';
+export type Stage = 'boot' | 'title' | 'morning' | 'seam' | 'dive' | 'mirror' | 'settle' | 'talk' | 'progress';
 
 /** 幸存者遭遇结算（E2）：+5 文谢礼 */
 const SURVIVOR_BONUS = 5;
@@ -204,6 +205,11 @@ export class Game {
           (e) => console.error('[世界] 加载失败（调试直达）:', e),
         );
         break;
+      case 'mirror':
+        // 镜像对照页（N6）：归航后、结算前，「世界记得你的总和」
+        this.stage = 'mirror';
+        this.screens.mirror(buildMirrorView(readMirrorStats(this.ledger)), () => this.goto('settle'));
+        break;
       case 'settle':
         this.stage = 'settle';
         this.hud.show(false);
@@ -250,7 +256,7 @@ export class Game {
     this.nightRunCount = 0; // 抖动按「本夜第几次潜」计：换夜（含 enterNight 重进）清零
     const def = this.def;
     if (this.items) this.items.dispose(this.deps.scene);
-    this.items = new WorldItems(this.deps.scene, this.deps.world.nav, def.loot, def.door, def.warmLamps);
+    this.items = new WorldItems(this.deps.scene, this.deps.world.nav, def.loot, def.door, def.warmLamps, def.barriers);
     this.items.reset();
     this.items.loot.forEach((i) => (i.root.visible = false)); // 非下潜阶段藏起世界物
     this.entity.applyNight(this.deps.world.nav, this.deps.world.collision, def.entity, this.deps.scene);
@@ -436,7 +442,8 @@ export class Game {
     saveUnlockedNight(def.night + 1);
     this.nightRunCount++;
     this.sfx.bell(reason === 'return');
-    this.goto('settle');
+    // 镜像夜（N6）：结算前先看「世界记得你的总和」（归航才结总账——门关/放弃不遮这一页）
+    this.goto(this.def.mirrorPage ? 'mirror' : 'settle');
   }
 
   private openSettle() {
@@ -1033,6 +1040,8 @@ export class Game {
       survivorBonus: this.survivorBonus,
       echo: this.echo?.debug ?? { kind: this.echoKind, morning: this.echoMorning },
       guest: this.guest?.debug ?? { present: this.guestSaved, bellTaken: false, bell: null },
+      /** 镜像对照页统计（N6）：与账本一致性核对用（saved/robbed/ignored/lost/caught/nights） */
+      mirrorStats: mirrorSummary(readMirrorStats(this.ledger)),
       sanity: +this.sanity.toFixed(1),
       sanityBlindLeft: this.def.sanity
         ? +Math.max(0, this.def.sanity.blackoutBlindSeconds - (this.entity.debug.tAcc - this.sanityBlindT)).toFixed(1)
