@@ -31,6 +31,14 @@ export interface SettleView {
   lampOk: boolean;
 }
 
+/** 晨间住客卡数据（N4 住客回归，#26 常客系统；无住客则缺省走伙计情报行） */
+export interface GuestCardView {
+  name: string;
+  intro: string;
+  line: string;
+  intel: string;
+}
+
 export class Screens {
   private box: HTMLElement;
   private current: HTMLElement | null = null;
@@ -124,8 +132,9 @@ export class Screens {
     setTimeout(() => nameInput.focus(), 50);
   }
 
-  // ---- 驿站晨间（hub，按夜配置渲染委托文案；echoMorning=N2 选择回响的一行字，N3 起） ----
-  morning(records: LedgerRecord[], def: NightDef, onDive: () => void, echoMorning?: string) {
+  // ---- 驿站晨间（hub，按夜配置渲染委托文案；echoMorning=N2 选择回响的一行字，N3 起；
+  //      guestCard=N4 住客卡（#26 常客回归，saved 集）；keeperIntel=无住客时的伙计情报行） ----
+  morning(records: LedgerRecord[], def: NightDef, onDive: () => void, echoMorning?: string, guestCard?: GuestCardView, keeperIntel?: string) {
     const scr = h('div', 'g-screen g-morning');
     scr.innerHTML = `
       <div class="g-hub-head">
@@ -139,6 +148,7 @@ export class Screens {
           <div class="g-quest-title">${def.quest.title}</div>
           <p class="g-quest-body">${def.quest.body}</p>
           <p class="g-quest-sign">${def.quest.sign}</p>
+          ${!guestCard && keeperIntel ? `<p class="g-keeper-intel">${keeperIntel}</p>` : ''}
         </div>
         <div class="g-ledger">
           <div class="g-quest-tag">因果账本</div>
@@ -153,6 +163,17 @@ export class Screens {
         </div>
       </div>
     `;
+    // N4 住客卡（#26 常客系统首秀）：他就是 N2 被救的人，住下了，给一条口头情报
+    if (guestCard) {
+      const card = h('div', 'g-guest-card');
+      card.innerHTML = `
+        <div class="g-guest-name">${guestCard.name}</div>
+        <p class="g-guest-intro">${guestCard.intro}</p>
+        <p class="g-guest-line">${guestCard.line}</p>
+        <p class="g-guest-intel">${guestCard.intel}</p>
+      `;
+      scr.append(card);
+    }
     const row = h('div', 'g-btn-row center');
     const dive = h('button', 'g-btn primary big', `推门下潜 · 第${nightCn(def.night)}夜`);
     dive.onclick = () => {
@@ -274,7 +295,7 @@ export class Screens {
   }
 
   // ---- 夜谈 ----
-  talk(archetype: string, comment: string, onContinue: () => void, echoComment?: string) {
+  talk(archetype: string, comment: string, onContinue: () => void, echoComment?: string, guestComment?: string) {
     const scr = h('div', 'g-screen g-talk');
     scr.innerHTML = `
       <h2>夜谈 · 灯下</h2>
@@ -283,6 +304,12 @@ export class Screens {
     const bubble = h('div', 'g-talk-bubble');
     bubble.innerHTML = `<span class="g-talk-arch">伙计 · ${archetype}</span><p>${comment}</p>${echoComment ? `<p class="g-talk-echo">${echoComment}</p>` : ''}`;
     scr.append(bubble);
+    // N4 住客回归（#26）：有住客时旅人也说一段（评论今夜经历）
+    if (guestComment) {
+      const gBubble = h('div', 'g-talk-bubble g-talk-guest');
+      gBubble.innerHTML = `<span class="g-talk-arch">旅人 · 住客</span><p>${guestComment}</p>`;
+      scr.append(gBubble);
+    }
     const row = h('div', 'g-btn-row center');
     const next = h('button', 'g-btn primary', '看今夜进度 →');
     next.onclick = () => {

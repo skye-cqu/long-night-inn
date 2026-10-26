@@ -8,12 +8,14 @@
  */
 import { NIGHTS, type Archetype, type NightDef } from './config';
 import { Ledger, loadUnlockedNight, saveUnlockedNight, type LedgerEventType } from './ledger';
-import { ARCHETYPE_LINES, LineBag, pickPlea, pickEnhancedChase, pickWraithLine, WRAITH_GONE_LINE } from './lines';
+import { ARCHETYPE_LINES, LineBag, pickPlea, pickEnhancedChase, pickWraithLine, pickSanityLowLine, SANITY_ZERO_LINE, WRAITH_GONE_LINE } from './lines';
 import { Sfx } from './audio';
 import { WorldItems, type LootItem } from './items';
 import { Entity } from './entity';
 import { Survivor } from './survivor';
 import { Echo, readEchoKind, ECHO_MORNING, ECHO_RELIC_TEXT, pickEchoTalk, type EchoKind } from './echo';
+import { DustField } from './atmosphere';
+import { Guest, readGuestSaved, GUEST_CARD, GUEST_INNKEEPER_INTEL, pickGuestTalk } from './guest';
 import { Hud } from './hud';
 import { Screens, type SurvivorChoice } from './screens';
 import type { WalkControls, PlayerState } from '../walk-controls';
@@ -32,6 +34,10 @@ const PAPER_VALUE = 10;
 const GIFT_VALUE = 5;
 /** 谢礼灯笼视觉源：复用 Lux3D 铜灯笼 GLB（零新资产） */
 const GIFT_GLB = './assets/token-lantern.glb';
+/** N4 住客回归「古镇银铃」（图鉴系列第 5 格——N2 油纸包第 4 格之后；值在 NightDef.guest.bellValue） */
+const BELL_ID = 'bell';
+/** 银铃视觉源：复用 Lux3D 怀表 GLB（圆金属件铃形最近，零新资产） */
+const BELL_GLB = './assets/token-watch.glb';
 
 /** 当前世界运行时句柄（main.ts 持有并在换夜时原地更新字段） */
 export interface WorldHandle {
@@ -76,6 +82,15 @@ export class Game {
   private echo: Echo | null = null;
   private echoKind: EchoKind | null = null;
   private echoMorning: string | null = null;
+  /** 住客回归（N4，#26 常客系统）：N2 结局=saved → 旅人住下；银铃两种集都刷（beginDive 重建） */
+  private guest: Guest | null = null;
+  private guestSaved = false;
+  /** 黑暗理智（N4 恐惧表强化，§3.6）：0..100，归零=实体盲追（数值在 NightDef.sanity） */
+  private sanity = 100;
+  private sanityBlindT = -99;
+  private sanityLineT = -99;
+  /** 悬浮微尘粒子（N4 氛围，three Points 零贴图） */
+  private dust: DustField | null = null;
   /** 强化实体首次追击台词（每局一次） */
   private enhancedChaseShown = false;
   private hud: Hud;
@@ -155,7 +170,14 @@ export class Game {
         this.stage = 'morning';
         this.hud.show(false);
         this.deps.hint.style.opacity = '0';
-        this.screens.morning(this.ledger.all(), this.def, () => this.goto('seam'), this.echoMorning ?? undefined);
+        this.screens.morning(
+          this.ledger.all(),
+          this.def,
+          () => this.goto('seam'),
+          this.echoMorning ?? undefined,
+          this.guestCard(),
+          this.keeperIntel() ?? undefined,
+        );
         break;
       case 'seam': {
         this.stage = 'seam';
@@ -240,6 +262,16 @@ export class Game {
     }
     this.echoKind = def.echoAnchors ? readEchoKind(this.ledger) : null;
     this.echoMorning = this.echoKind ? ECHO_MORNING[this.echoKind] : null;
+    // 住客回归（N4）：换夜重建世界物 + 读 N2 结局定住客（晨间卡/夜谈用；银铃 beginDive 显形）
+    if (this.guest) {
+      this.guest.dispose();
+      this.guest = null;
+    }
+    if (this.dust) {
+      this.dust.dispose();
+      this.dust = null;
+    }
+    if (def.guest) this.guestSaved = readGuestSaved(this.ledger);
     this.hud.setNight(def);
     this.ensureWorld(def); // 晨间屏幕期间后台预取
   }
@@ -315,6 +347,22 @@ export class Game {
       this.echo.spawn(this.echoKind, GIFT_GLB);
     }
 
+    // 住客回归（N4，#26）：银铃显形（两种住客集都刷）；present 只驱动晨间卡/夜谈
+    if (def.guest) {
+      if (!this.guest) this.guest = new Guest(this.deps.scene, this.deps.world.nav, def.guest);
+      this.guest.spawn(this.guestSaved, BELL_GLB);
+    }
+
+    // 黑暗理智（N4，§3.6）：每局回满；水下微尘只在 N4 下潜可见
+    this.sanity = 100;
+    this.sanityBlindT = -99;
+    this.sanityLineT = -99;
+    this.hud.setSanity(100, !!def.sanity, def.sanity?.lowThreshold ?? 30);
+    if (def.dust) {
+      if (!this.dust) this.dust = new DustField(this.deps.scene, this.deps.world.nav);
+      this.dust.setVisible(true);
+    }
+
     const { spawn } = def;
     this.deps.controls.startAt(spawn.x, spawn.z, spawn.yaw);
     this.deps.controls.setRuntimeEnabled(true);
@@ -347,11 +395,12 @@ export class Game {
     this.sfx.stopHeartbeat();
     this.hud.show(false);
     this.deps.hint.style.opacity = '0';
-    // 回响世界物随本局收摊（结局集与晨间字保留到夜谈/进度）
+    // 回响世界物随本局收摊（结局集与晨间字保留到夜谈/进度）；微尘层只在下潜可见
     if (this.echo) {
       this.echo.dispose();
       this.echo = null;
     }
+    this.dust?.setVisible(false);
 
     const lostValue = lostAll ? this.held.reduce((s, i) => s + i.value, 0) : 0;
     if (lostAll) this.held = [];
@@ -417,7 +466,8 @@ export class Game {
   }
 
   private openTalk() {
-    // 夜谈：伙计评论本夜（本次下潜）第一条账本记录；N3 起追加 N2 选择回响的评语（世界记得你）
+    // 夜谈：伙计评论本夜（本次下潜）第一条账本记录；N3 起追加 N2 选择回响的评语（世界记得你）；
+    // N4 有住客时旅人也说一段（#26 常客系统：评论 N4 经历，池 ≥2 条）
     const runRecords = this.ledger.all().filter((r) => r.ts >= this.runStartTs && r.night === this.def.night);
     const first = runRecords[0];
     const type: LedgerEventType = first ? first.type : 'return';
@@ -426,6 +476,7 @@ export class Game {
       this.bag.talk(type as never),
       () => this.goto('progress'),
       this.echoKind ? pickEchoTalk(this.echoKind) : undefined,
+      this.def.guest && this.guestSaved ? pickGuestTalk() : undefined,
     );
   }
 
@@ -532,6 +583,36 @@ export class Game {
       }
     }
 
+    // 黑暗理智（N4 恐惧表机制强化，§3.6 噪音/光照槽）：手电关且离暖光点>darkRadius=黑暗区，
+    // 每秒 -drainPerSec；手电开或近灯不扣（不做被动回复——压力来源只有「灯」，
+    // 归零=实体盲追+回 recover，见 sanityZero()）。暖光锚=灯笼×3+归航门暖光柱
+    // （门口=灯下安全区：锚定法则，出生/归航不扣理智）
+    if (def.sanity) {
+      const ps0 = { x: ps.position.x, z: ps.position.z };
+      let nearest = Math.hypot(def.door.x - ps0.x, def.door.z - ps0.z);
+      for (const lamp of def.warmLamps ?? []) nearest = Math.min(nearest, Math.hypot(lamp.x - ps0.x, lamp.z - ps0.z));
+      const inDark = !this.flashlight && nearest > def.sanity.darkRadius;
+      if (inDark) this.sanity = Math.max(0, this.sanity - def.sanity.drainPerSec * dt);
+      this.hud.setSanity(this.sanity, true, def.sanity.lowThreshold);
+      if (this.sanity < def.sanity.lowThreshold && t - this.sanityLineT > 12) {
+        // 低理智：水波纹暗角（hud.setSanity 已开）+ 伙计慌（低频）
+        this.sanityLineT = t;
+        this.sfx.fearPing();
+        this.hud.bubble(pickSanityLowLine(), this.archetype, 5000);
+      }
+      if (this.sanity <= 0 && t > this.sanityBlindT + def.sanity.blackoutBlindSeconds) {
+        this.sanityBlindT = t;
+        this.sanity = def.sanity.blackoutRecover;
+        this.entity.enrage(def.sanity.blackoutBlindSeconds, t);
+        this.hud.flashRed();
+        this.hud.bubble(SANITY_ZERO_LINE, this.archetype, 6000);
+        console.warn(`[理智] 归零：实体盲追 ${def.sanity.blackoutBlindSeconds}s，理智回 ${def.sanity.blackoutRecover}`);
+      }
+    }
+
+    // 住客回归（N4）：银铃浮动
+    this.guest?.update(dt, t);
+
     // N2 选择回响（N3）：残影逼近=紧张台词+红晕；绕开=散去（edge 各一次）
     if (this.echo) {
       const et = this.echo.update(dt, t, ps.position);
@@ -548,9 +629,12 @@ export class Game {
     // 交互提示
     const near = this.items.nearest(ps.position);
     const echoNear = this.echo?.nearInteractable(ps.position) ?? null;
+    const bellInRange = this.guest?.isBellInRange(ps.position, def.pickupRadius) ?? false;
     const doorD = Math.hypot(ps.position.x - def.door.x, ps.position.z - def.door.z);
     if (near && near.dist < def.pickupRadius) {
       this.hud.setPrompt(`按 E 拾取 · ${near.item.def.name}（${near.item.value} 文）`);
+    } else if (bellInRange) {
+      this.hud.setPrompt(`按 E 拾取 · 古镇银铃（${def.guest?.bellValue ?? 12} 文）`);
     } else if (echoNear && echoNear.dist < (echoNear.kind === 'gift' ? def.pickupRadius : 2.0)) {
       this.hud.setPrompt(echoNear.kind === 'gift' ? '按 E 收下 · 谢礼灯笼（+5 文）' : '按 E 察看');
     } else if (doorD < def.doorReturnRadius) {
@@ -561,6 +645,7 @@ export class Game {
     }
 
     this.items.update(t, dt);
+    this.dust?.update(t);
   }
 
   // ---- 事件 ----
@@ -736,9 +821,69 @@ export class Game {
     };
   }
 
-  /** held 里的特殊所得数（油纸包/谢礼灯笼——图鉴目标总数用） */
+  /** held 里的特殊所得数（油纸包/谢礼灯笼/古镇银铃——图鉴目标总数用） */
   private specialHeldCount(): number {
-    return this.held.filter((i) => i.def.id === 'paper' || i.def.id === 'gift').length;
+    return this.held.filter((i) => i.def.id === 'paper' || i.def.id === 'gift' || i.def.id === BELL_ID).length;
+  }
+
+  // ---- 住客回归（N4，#26 常客系统）----
+
+  /** E 拾取银铃（两种住客集都刷；值 12 文，图鉴系列第 5 格）。未命中返回 false */
+  private tryBell(): boolean {
+    const guest = this.guest;
+    const def = this.def;
+    if (!guest || !def.guest) return false;
+    const ps = this.deps.controls.playerState;
+    if (!guest.isBellInRange(ps.position, def.pickupRadius)) return false;
+    const value = def.guest.bellValue;
+    guest.takeBell();
+    this.held.push(this.makeBellItem(value));
+    this.sfx.pickup();
+    this.hud.pushCodexSlot(BELL_ID, 'lantern', '古镇银铃', value);
+    this.hud.setCodex(this.held.map((i) => i.def.id));
+    this.hud.setGoal(this.heldCount(), this.items.loot.length + this.specialHeldCount(), this.heldValue(), def.bill);
+    this.ledger.add(def.night, 'loot', { id: BELL_ID, name: '古镇银铃', value, deep: true, guest: guest.present ? 'saved' : 'none' });
+    this.hud.bubble(
+      guest.present ? '银铃收下了。住客说得没错——镇子最深处，果然留着好东西。' : '银铃收下了。伙计的鼻子比狗还灵……这铃声在水里也传得很远。',
+      this.archetype,
+      5200,
+    );
+    // 拾取=中噪（同战利品）
+    this.entity.hear({ x: ps.position.x, z: ps.position.z, level: def.noise.pickup });
+    return true;
+  }
+
+  /** 古镇银铃：不落地的特殊所得（同油纸包/谢礼灯笼模式） */
+  private makeBellItem(value: number): LootItem {
+    return {
+      def: {
+        id: BELL_ID,
+        name: '古镇银铃',
+        value,
+        x: 0,
+        z: 0,
+        color: 0xd8dee8,
+        glowColor: 0xcfe0ea,
+        shape: 'lantern',
+      },
+      root: null as unknown as Object3D,
+      pos: null as unknown as Vector3,
+      baseY: 0,
+      taken: false,
+      value,
+    };
+  }
+
+  /** 晨间住客卡（saved 集；无住客=undefined） */
+  private guestCard() {
+    if (!this.def.guest || !this.guestSaved) return undefined;
+    return GUEST_CARD;
+  }
+
+  /** 无住客时的伙计情报行（银铃照刷，情报换人给） */
+  private keeperIntel() {
+    if (!this.def.guest || this.guestSaved) return null;
+    return GUEST_INNKEEPER_INTEL;
   }
 
   private toggleFlashlight() {
@@ -768,7 +913,7 @@ export class Game {
     }
     if (this.screens.talkboxOpen) return; // 输入框自己的 keydown 处理
     if (e.code === 'KeyE') {
-      if (!this.tryPickup() && !this.trySurvivorTalk() && !this.tryEcho()) this.tryReturn();
+      if (!this.tryPickup() && !this.trySurvivorTalk() && !this.tryEcho() && !this.tryBell()) this.tryReturn();
     } else if (e.code === 'KeyF') {
       this.toggleFlashlight();
     } else if (e.code === 'KeyT') {
@@ -877,6 +1022,11 @@ export class Game {
       survivorOutcome: this.survivorOutcome,
       survivorBonus: this.survivorBonus,
       echo: this.echo?.debug ?? { kind: this.echoKind, morning: this.echoMorning },
+      guest: this.guest?.debug ?? { present: this.guestSaved, bellTaken: false, bell: null },
+      sanity: +this.sanity.toFixed(1),
+      sanityBlindLeft: this.def.sanity
+        ? +Math.max(0, this.def.sanity.blackoutBlindSeconds - (this.entity.debug.tAcc - this.sanityBlindT)).toFixed(1)
+        : 0,
       ftue: this.ftue,
       sfx: this.sfx.enabled,
     };
@@ -923,6 +1073,13 @@ export class Game {
       survivorDialog: () => this.trySurvivorTalk(),
       /** 回响调试（N3）：E 交互回响物（拾谢礼灯笼/察看叙事物件）；状态见 __game.night.echo */
       echoInteract: () => this.tryEcho(),
+      /** 住客调试（N4）：E 交互银铃；状态见 __game.night.guest */
+      bellInteract: () => this.tryBell(),
+      /** 黑暗理智调试（N4）：直接置理智值（归零流程自动化驱动用）；状态见 __game.night.sanity */
+      setSanity: (v: number) => {
+        this.sanity = Math.min(100, Math.max(0, v));
+        return this.sanity;
+      },
       /** 取证：隐藏/显示战利品与门（像素差对照用） */
       showItems: (v: boolean) => {
         this.items.loot.forEach((i) => (i.root.visible = v && !i.taken));
