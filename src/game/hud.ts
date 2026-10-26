@@ -148,6 +148,7 @@ export class Hud {
     this.fogLevel = def.fog;
     this.fogEl.classList.toggle('snow', def.fogTint === 'snow');
     this.fogEl.classList.toggle('deepsea', def.fogTint === 'deepsea');
+    this.fogEl.classList.toggle('sand', def.fogTint === 'sand');
     this.applyFog();
     this.sanityEnabled = !!def.sanity;
     this.sanityRow.style.display = this.sanityEnabled ? '' : 'none';

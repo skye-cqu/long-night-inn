@@ -185,6 +185,17 @@ export class Entity {
     if (this.state !== 'chase') this.state = 'chase';
   }
 
+  /** 第二招「见光追」（N5 匮乏夜，cfg.sightTrick）：手电开启瞬间实体直接获得玩家位置，
+   *  无视视线/距离盲追 sightTrickSeconds 秒（复用 enrage 通道——红眼点光同步抬档，
+   *  演出=「它顺着你的光柱摸过来了」）。手电关闭不影响已开启的窗口。
+   *  返回是否触发（调试/伙计台词用；非 sightTrick 夜恒 false，N1–N4 零变化）。 */
+  flashlightPing(now: number): boolean {
+    if (!this.cfg.sightTrick) return false;
+    if (now < this.enrageUntil) return false; // 窗口已在追：不重置计时
+    this.enrage(this.cfg.sightTrickSeconds ?? 6, now);
+    return true;
+  }
+
   teleport(x: number, z: number) {
     this.pos.set(x, this.nav.floorAt(x, z) + ENTITY_HEIGHT * 0.5, z);
   }

@@ -380,7 +380,12 @@ export class Game {
     this.hud.resetCodex(); // 重建本夜图鉴：清掉上局 pushCodexSlot 的特殊所得（跨局不残留）
     this.deps.hint.textContent = '点击画面进入行走模式 · WASD 移动 / 鼠标转向 / E 拾取 / F 手电 / T 说话';
     this.deps.hint.style.opacity = '1';
-    this.hud.bubble(this.bag.scene('opening'), this.archetype, 6000);
+    // 伙计开场：本夜专属池（N5 匮乏夜 ≥2 条）优先，缺省按原型通用开场池
+    const opening =
+      def.openingLines && def.openingLines.length > 0
+        ? def.openingLines[Math.floor(Math.random() * def.openingLines.length)]!
+        : this.bag.scene('opening');
+    this.hud.bubble(opening, this.archetype, 6000);
   }
 
   private endDive(lostAll: boolean, reason: 'return' | 'door' | 'giveup') {
@@ -449,6 +454,7 @@ export class Game {
         billCard: {
           night: def.night,
           seedName: def.seedName,
+          tagline: def.tagline,
           looted: this.held.map((i) => ({ name: i.def.name, value: i.value })),
           total,
           bill: def.bill,
@@ -890,6 +896,10 @@ export class Game {
     this.flashlight = !this.flashlight;
     this.sfx.flash();
     this.hud.setVignette(this.flashlight ? 'bright' : 'dark');
+    // 第二招「见光追」（N5 匮乏夜）：手电开启瞬间实体直接获得玩家位置（开启瞬间才触发）
+    if (this.flashlight && this.entity.flashlightPing(performance.now() / 1000)) {
+      this.hud.bubble('你的光照到了它——它顺着光柱摸过来了！', this.archetype, 5000);
+    }
   }
 
   private openTalkbox() {
@@ -1051,7 +1061,9 @@ export class Game {
       flash: (on?: boolean) => {
         this.flashlight = on ?? !this.flashlight;
         this.hud.setVignette(this.flashlight ? 'bright' : 'dark');
-        return this.flashlight;
+        // 与按键路径同款：见光追（N5 sightTrick）在调试 API 上同样触发
+        const pinged = this.flashlight && this.entity.flashlightPing(performance.now() / 1000);
+        return { on: this.flashlight, sightTrick: pinged };
       },
       entityChase: () => this.entity.forceState('chase'),
       entityTeleport: (x: number, z: number) => this.entity.teleport(x, z),

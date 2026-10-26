@@ -58,6 +58,11 @@ export interface EntityDef {
   eyeBoost?: number;
   /** 强化实体：首次进入追击时伙计说强化版台词（n3_chase 池） */
   enhanced?: boolean;
+  /** 第二招「见光追」（N5 匮乏夜）：手电开启瞬间实体直接获得玩家位置，无视视线/距离盲追
+   *  sightTrickSeconds 秒（复用 enrage 盲追通道——「它顺着光柱摸过来了」） */
+  sightTrick?: boolean;
+  /** 见光追持续秒数（N5=6） */
+  sightTrickSeconds?: number;
 }
 
 /** 幸存者槽位（遭遇玩法 E2 接入；E1 只立 flag 与挂点，不生成） */
@@ -126,8 +131,13 @@ export interface NightDef {
   echoJitter: number;
   /** CSS 雾层强度 0..1（开阔地形补偿；0=无雾层，N1 保持原样） */
   fog: number;
-  /** 雾层色调：plain=灰蓝（N2）/ snow=雪雾白偏冷（N3，带缓漂移）/ deepsea=水下青雾（N4）；缺省 plain */
-  fogTint?: 'plain' | 'snow' | 'deepsea';
+  /** 雾层色调：plain=灰蓝（N2）/ snow=雪雾白偏冷（N3，带缓漂移）/ deepsea=水下青雾（N4）/
+   *  sand=沙尘暖雾（N5）/ dualband=冷热双色带（N6，半冷半暖渐变）；缺省 plain */
+  fogTint?: 'plain' | 'snow' | 'deepsea' | 'sand' | 'dualband';
+  /** 账单卡上的夜型字样（N5=「匮乏夜」；缺省不显示，N1–N4 卡面零变化） */
+  tagline?: string;
+  /** 本夜伙计开场台词池（≥2 条，beginDive 随机抽一条；缺省=按伙计原型通用开场池） */
+  openingLines?: string[];
   /** 暖光点（零新资产：主街两侧发光小球+点光；N3 雪夜灯笼暖光；N4 兼作黑暗理智的「灯下安全区」锚） */
   warmLamps?: Array<{ x: number; z: number }>;
   /** 悬浮微尘粒子（N4 深海氛围，three Points ≤200 点零贴图；缺省关） */
@@ -431,9 +441,99 @@ export const N4: NightDef = {
   survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
 };
 
-/** 全部已配置夜（进度页/解锁链按此渲染） */
-export const NIGHTS: NightDef[] = [N1, N2, N3, N4];
+/** 第五夜「沙漠 × 图书馆」——世界=world-n5（任务E7，worldId 3FO4K4QHGFEC，355,985 点，
+ * 10.7min 一次成）。E7 顶向下 nav 可信（可走 51%/主块 201 格）但混入书架顶带 y≈9–10
+ * 共 58 格；接入前经 scripts/gen-nav-band.mjs 锚定真实地面 y∈[0.5,5.5] 带限
+ * （留 143 格剔 58 格，globalFloor→3；E7 留痕「出生/寻路锚定 y≈2–3」）。
+ * 选点=过程留痕/2026-10-26/游戏工程-N5N6接入/plan-n5-points.mjs（plan-n4 硬规则同款）：
+ * 主块 87 格（西半场走廊，东半 50 格隔缝景片=拼贴感），主导带 y≈2，
+ * 门 (-1.55,-1.45) 带面 2.0 同带邻 2；深度梯度 3/6/9m；实体出生 (-5.05,3.05) 门同带。
+ * 机制槽（设计 §7 N5）＝匮乏夜：账单最高 60 文、信物最深梯度 15/18/25（合计 58——
+ * 首潜满捡仍短 2 文，缺额由账单卡「匮乏夜」字样+晨间委托「收灯人今晚要得更多」
+ * +伙计开场池演出；回响重玩 ±2 文抖动才可能凑齐——「匮乏」是这一夜的脾气）；
+ * 实体两招＝闻声而动（基线噪音 AI）+见光追（sightTrick：手电开启瞬间直接获得玩家
+ * 位置盲追 6s，entity.ts 复用 enrage 通道），追速 3.4/侦测 10m/手电 ×2.5。
+ * 理智判断：不启用（sanity 缺省即关）。理由——N5 威胁密度已由两招拉满，若再叠黑暗
+ * 扣减，同屏机制=导航×双招×理智×贪婪超 3 层（设计 §5「同屏机制 ≤3」），且两招中的
+ * 见光追与理智的手电权衡同键（F）冲突：开灯=追+扣双重惩罚，「看得见 vs 招实体」
+ * 变成没有选择的纯惩罚。灯位照 N4 教训门侧布（15/32/50% 深度），深半场留真黑暗
+ * 氛围（>6m 无灯），与贪婪同向——但只做氛围不做数值。 */
+export const N5: NightDef = {
+  night: 5,
+  seedName: '沙漠 × 图书馆',
+  quest: {
+    title: '收灯人 · 灯油钱 60 文',
+    body: '「沙子今晚灌进了书房——收灯人今晚要得更多：六十文。<br/>书架深处的东西比哪晚都值钱，那具锈掉的东西也学会了新招：它顺着你的光走。<br/>凑不齐也得回来。灯暗一分，总比人留在沙里强。」',
+    sign: '—— 收灯人（没露脸）',
+  },
+  bill: 60,
+  diveSeconds: 240,
+  world: {
+    spz: './assets/world-n5.spz',
+    nav: './assets/world-n5.nav.json',
+    voxelMeta: './assets/collision-n5.voxel-meta.json',
+    voxelBin: './assets/collision-n5.voxel.bin',
+  },
+  // 门/出生=主块（87 格）东缘（plan-n5-points 主导带外缘最远格，带面 2.0 同带邻 2）；朝深处的西南
+  door: { x: -1.55, z: -1.45 },
+  doorReturnRadius: 1.5,
+  spawn: { x: -1.55, z: -1.45, yaw: 2.36 },
+  loot: [
+    // 门 BFS：浅 3m / 中 6m / 深 9m ↔ 15/18/25 文匮乏深度梯度（合计 58，首潜短 2 文=匮乏演出）
+    { id: 'oil', name: '沙埋的灯油', value: 15, x: -4.05, z: -0.95, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
+    { id: 'lantern', name: '铜页书夹灯', value: 18, x: -4.55, z: 1.55, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
+    { id: 'watch', name: '馆长的黄铜怀表', value: 25, x: -6.05, z: 3.05, color: 0xd8d8e0, glowColor: 0xfff2cc, shape: 'watch', glb: './assets/token-watch.glb' },
+  ],
+  pickupRadius: 1.6,
+  entity: {
+    name: '锈声者',
+    // 游荡区=plan-n5-points 深度 >55% 主块 bbox（0.2m 内收避开包围盒钳制缘）
+    wanderMin: { x: -6.6, z: 1.5 },
+    wanderMax: { x: -2.5, z: 4.1 },
+    wanderSpeed: 1.2,
+    investigateSpeed: 2.8,
+    chaseSpeed: 3.4, // 匮乏夜：比 N4 沉底的雾影再快半步（跑 4.2 甩得掉，走 2.2 甩不掉）
+    sightRange: 10, // 侦测 10m（N3 同值；N1 8 / N2 9 / N4 9）
+    flashlightRangeMul: 2.5, // 手电 ×2.5（与 N3 持平）：图书馆黑暗里开灯更招东西
+    loseSightSeconds: 4,
+    catchRadius: 0.95,
+    noiseRadiusMax: 22,
+    chaseNoiseLevel: 0.85,
+    glb: './assets/entity-n2.glb', // 锈声者同源 GLB（N2 Lux3D 资产复用，零新资产）
+    start: { x: -5.05, z: 3.05 }, // 深段带面 2.4，与门同主导带（y≈2），玩家必经带上
+    sightTrick: true, // 第二招「见光追」：手电开启=实体直接获得玩家位置
+    sightTrickSeconds: 6, // 盲追 6s（N5 专属）
+  },
+  noise: { crouch: 0.08, walk: 0.35, sprint: 1.0, pickup: 0.55, speak: 1.0 },
+  whisper: { range: 20, interval: 8 },
+  fearRange: 12,
+  dangerSeconds: 60,
+  speed: { walk: 2.2, sprint: 4.2, crouch: 1.05 },
+  stamina: { max: 100, drainPerSec: 26, regenPerSec: 14, sprintMin: 20 },
+  echoJitter: 2,
+  fog: 0.45, // 沙尘暖雾（fogTint='sand'），浓度与 N3 雪雾 0.42 同档
+  fogTint: 'sand',
+  // 账单卡夜型字样（匮乏演出三件套之二；之一=晨间委托文案，之三=下方开场池）
+  tagline: '匮乏夜',
+  // 伙计开场池（≥2 条，beginDive 随机抽——匮乏夜的脾气）
+  openingLines: [
+    '沙、书、还有比昨晚贵一半的账单——收灯人今晚分明是来抢劫的。捡仔细点。',
+    '这地方的书全被沙啃哑了。还有，那锈东西学会了闻你的灯——开 F 之前先想想。',
+    '六十文。墙上写的借阅规则第一条：逾期者，书架替你保管随身物品。别逾期。',
+  ],
+  // 暖光点 ×3：门侧 15/32/50% 深度（N4 调优口径——深半场留黑暗氛围与贪婪同向；
+  // N5 不启用理智，灯=纯氛围不做数值）
+  warmLamps: [
+    { x: -3.05, z: -1.45 },
+    { x: -4.05, z: -0.95 },
+    { x: -4.05, z: 1.05 },
+  ],
+  // N5 无幸存者遭遇（遭遇是 N2 机制槽）
+  survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
+};
 
+/** 全部已配置夜（进度页/解锁链按此渲染） */
+export const NIGHTS: NightDef[] = [N1, N2, N3, N4, N5];
 /** 夜数中文序号（1→一） */
 export function nightCn(night: number): string {
   return '一二三四五六七八九'[night - 1] ?? String(night);

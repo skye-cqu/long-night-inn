@@ -8,6 +8,8 @@
 export interface BillCardData {
   night: number;
   seedName: string;
+  /** 夜型字样（N5=「匮乏夜」/ N6=「镜像夜」；缺省不显示，N1–N4 卡面零变化） */
+  tagline?: string;
   looted: Array<{ name: string; value: number }>;
   total: number;
   bill: number;
@@ -43,7 +45,7 @@ export function buildBillCardDom(d: BillCardData): HTMLElement {
   card.innerHTML = `
     <div class="bc-head">
       <span class="bc-title">今夜账单</span>
-      <span class="bc-night">第${'一二三四五六七'[d.night - 1] ?? d.night}夜 · ${d.seedName}</span>
+      <span class="bc-night">第${'一二三四五六七'[d.night - 1] ?? d.night}夜 · ${d.seedName}${d.tagline ? `<b class="bc-tag">${d.tagline}</b>` : ''}</span>
     </div>
     <div class="bc-loot">${items}<span class="bc-total">共 ${fmt(d.total)}</span></div>
     <div class="bc-bill">账单 ${fmt(d.bill)} → ${d.paid ? '<b class="bc-ok">付清 · 灯亮</b>' : `<b class="bc-bad">差 ${fmt(d.bill - d.total)} · 灯暗一分</b>`}</div>
@@ -89,7 +91,7 @@ export function saveBillCardPng(d: BillCardData) {
   g.fillText('今夜账单', 44, 74);
   g.font = '18px "KaiTi","STKaiti",serif';
   g.fillStyle = gold;
-  g.fillText(`第${'一二三四五六七'[d.night - 1] ?? d.night}夜 · ${d.seedName}`, 210, 72);
+  g.fillText(`第${'一二三四五六七'[d.night - 1] ?? d.night}夜 · ${d.seedName}${d.tagline ? ' · ' + d.tagline : ''}`, 210, 72);
 
   // 战利品
   g.fillStyle = ink;

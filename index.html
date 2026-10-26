@@ -167,6 +167,17 @@
       from { transform: translate3d(0, 0, 0) scale(1.02); filter: brightness(1); }
       to { transform: translate3d(1.2%, -0.6%, 0) scale(1.06); filter: brightness(0.88); }
     }
+    /* 沙尘暖雾（N5 沙漠×图书馆：暖沙色 screen 叠加，缓漂移=沙流过书巷） */
+    .g-fog.sand {
+      background:
+        linear-gradient(180deg, rgba(214,186,142,0.30) 0%, rgba(214,186,142,0) 26%),
+        radial-gradient(ellipse at center, rgba(222,196,150,0.10) 30%, rgba(210,178,132,0.38) 68%, rgba(150,118,84,0.72) 100%);
+      animation: sand-drift 24s ease-in-out infinite alternate;
+    }
+    @keyframes sand-drift {
+      from { transform: translate3d(0, 0, 0) scale(1.02); }
+      to { transform: translate3d(1.5%, 0.4%, 0) scale(1.05); }
+    }
     /* 黑暗理智低值水波纹暗角（N4）：层叠环形波纹+暗角，缓慢缩放呼吸（CSS 零新资产） */
     .g-mad {
       position: fixed; inset: 0; z-index: 17; pointer-events: none;
@@ -311,6 +322,13 @@
     .bc-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid rgba(201,168,107,0.4); padding-bottom: 6px; }
     .bc-title { font-family: KaiTi, STKaiti, serif; font-size: 26px; letter-spacing: 6px; }
     .bc-night { color: var(--gold); }
+    /* 夜型字样（N5 匮乏夜 / N6 镜像夜：账单卡上的金边小签） */
+    .bc-tag {
+      display: inline-block; margin-left: 8px; padding: 0 7px;
+      border: 1px solid var(--gold); border-radius: 2px;
+      font-family: KaiTi, "STKaiti", serif; font-size: 13px; letter-spacing: 3px;
+      color: var(--gold); transform: translateY(-1px);
+    }
     .bc-loot { margin: 8px 0; }
     .bc-item { display: inline-block; margin-right: 12px; color: var(--paper); }
     .bc-item.bc-dim { color: var(--dim); }
