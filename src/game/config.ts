@@ -177,7 +177,7 @@ export const N2: NightDef = {
   // 选点（plan-n2-points.mjs，E2 重选）：门=主连通块外缘最远角；浅/中/深=门 BFS 6/11.5/17m
   door: { x: -8.95, z: -2.45 },
   doorReturnRadius: 1.5,
-  spawn: { x: -8.95, z: -2.45, yaw: 0.59 },
+  spawn: { x: -8.95, z: -2.45, yaw: 0.98 },
   loot: [
     { id: 'oil', name: '灯油瓶', value: 8, x: -6.95, z: 0.55, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
     { id: 'lantern', name: '铜灯笼', value: 10, x: -1.45, z: 1.55, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
@@ -209,8 +209,10 @@ export const N2: NightDef = {
   stamina: { max: 100, drainPerSec: 26, regenPerSec: 14, sprintMin: 20 },
   echoJitter: 2,
   fog: 0.55, // 开阔地形：CSS 雾层压远景（补偿 splt 无体积雾）
-  // 幸存者槽位：岔路口（BFS 9m，nb=3），E2 遭遇玩法接入
-  survivor: { enabled: true, x: -3.45, z: 1.05, glb: './assets/survivor.glb' },
+  // 幸存者槽位：灯笼侧走廊（nav 带内选面 floor≈2.9 的实心格，门 BFS ~7m——油瓶与灯笼
+  // 之间的路上有人）。首选 (-2.2,1.05) 列体素探空（点云清洗残留孔洞，探地直坠 -8.5m），
+  // 弃用；pass 判据兜不住孔洞列，改用 nav 带面格实测，E2 遭遇玩法接入
+  survivor: { enabled: true, x: -2.95, z: 1.05, glb: './assets/survivor.glb' },
 };
 
 /** 全部已配置夜（进度页/解锁链按此渲染） */

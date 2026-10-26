@@ -745,6 +745,11 @@ export class Game {
       },
       entityChase: () => this.entity.forceState('chase'),
       entityTeleport: (x: number, z: number) => this.entity.teleport(x, z),
+      /** 实体调试：冻结（不再循声/追击）——遭遇玩法自动化测试用 */
+      entityFreeze: (v: boolean) => {
+        this.entity.calmUntil = v ? Number.POSITIVE_INFINITY : 0;
+        return v;
+      },
       /** 遭遇调试：不开卡直接按三选落地（自动化驱动用） */
       survivorChoice: (c: SurvivorChoice) => this.applySurvivorChoice(c),
       /** 遭遇调试：传送旅人（跟随/遭遇测试用） */

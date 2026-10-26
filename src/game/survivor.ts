@@ -75,9 +75,9 @@ export class Survivor {
     this.placeholder.add(body as never);
     this.root.add(this.placeholder as never);
 
-    // 随身微光（雾夜中可见的「活着的人」）
-    const lamp = new PointLight(0xffd9a0, 0.55, 3.5, 1.6);
-    lamp.position.y = 0.9;
+    // 随身灯笼（雾夜里的「一点暖光」——玩家靠它认出活人，也是低语雷达的可视锚）
+    const lamp = new PointLight(0xffd9a0, 1.5, 5.5, 1.4);
+    lamp.position.y = 1.0;
     this.root.add(lamp as never);
 
     this.pos.set(x, nav.floorAt(x, z), z);
