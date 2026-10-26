@@ -17,6 +17,13 @@ export interface NavData {
   globalFloorPos: number;
 }
 
+/** 一根可站柱：nav 非空格的格心水平坐标 + 该格地面高度 */
+export interface NavColumn {
+  x: number;
+  z: number;
+  y: number;
+}
+
 export interface NavField {
   /** 世界 up 方向的 y 符号：-1 = OpenCV（-Y up），+1 = glTF 惯例（+Y up） */
   upSign: number;
@@ -24,6 +31,8 @@ export interface NavField {
   bboxMax: [number, number, number];
   /** 地面高度（世界坐标 y）。 */
   floorAt(x: number, z: number): number;
+  /** 全部可站柱（非空格，量级≤网格数；坠落软复位「最近可站柱」用） */
+  columns: NavColumn[];
 }
 
 export function buildNavField(data: NavData, upSign: number): NavField {
@@ -37,5 +46,13 @@ export function buildNavField(data: NavData, upSign: number): NavField {
     const v = grid[iz * nx + ix];
     return v === null ? globalFloor : v;
   };
-  return { upSign, bboxMin, bboxMax, floorAt };
+  const columns: NavColumn[] = [];
+  for (let iz = 0; iz < nz; iz++) {
+    for (let ix = 0; ix < nx; ix++) {
+      const v = grid[iz * nx + ix];
+      if (v === null) continue;
+      columns.push({ x: bboxMin[0] + (ix + 0.5) * cellSize, z: bboxMin[2] + (iz + 0.5) * cellSize, y: v });
+    }
+  }
+  return { upSign, bboxMin, bboxMax, floorAt, columns };
 }

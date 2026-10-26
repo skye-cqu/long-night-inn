@@ -28,6 +28,8 @@ export class Hud {
   private nightLabel: HTMLElement;
   private codexRow: HTMLElement;
   private codexSlots: Array<{ id: string; value: number; slot: HTMLElement; val: HTMLElement }> = [];
+  /** 本夜信物表（buildCodex 时记住；resetCodex 按它重建，清掉 pushCodexSlot 的特殊槽） */
+  private codexDefs: LootDef[] = [];
   private noiseFill: HTMLElement;
   private staminaFill: HTMLElement;
   private prompt: HTMLElement;
@@ -131,6 +133,7 @@ export class Hud {
 
   /** 按信物表重建图鉴格 */
   private buildCodex(defs: LootDef[]) {
+    this.codexDefs = defs;
     this.codexRow.innerHTML = '';
     this.codexSlots = [];
     for (const def of defs) {
@@ -183,6 +186,11 @@ export class Hud {
     this.goal.classList.toggle('ok', value >= bill);
   }
 
+  /** 重建为本夜信物表并全灭：清掉 pushCodexSlot 追加的特殊所得槽（beginDive 每局调用，跨局不残留） */
+  resetCodex() {
+    this.buildCodex(this.codexDefs);
+  }
+
   setCodex(takenIds: string[]) {
     // 槽位自带 id/value（信物表 + E2 特殊所得），按 id 点亮
     for (const c of this.codexSlots) {
@@ -232,12 +240,12 @@ export class Hud {
     this.fearTint.style.opacity = String(Math.min(0.85, Math.max(0, f) * 0.85));
   }
 
-  /** 黑屏一瞬（被抓） */
-  flashBlack() {
+  /** 黑屏一瞬（默认 0.9s 渐隐=被抓；坠落软复位传 300=闪黑 0.3s） */
+  flashBlack(fadeMs = 900) {
     this.flashEl.style.transition = 'none';
     this.flashEl.style.opacity = '1';
     requestAnimationFrame(() => {
-      this.flashEl.style.transition = 'opacity 0.9s';
+      this.flashEl.style.transition = `opacity ${fadeMs}ms`;
       this.flashEl.style.opacity = '0';
     });
   }

@@ -15,10 +15,10 @@ import { Entity } from './entity';
 import { Survivor } from './survivor';
 import { Hud } from './hud';
 import { Screens, type SurvivorChoice } from './screens';
-import type { WalkControls } from '../walk-controls';
+import type { WalkControls, PlayerState } from '../walk-controls';
 import type { Companion } from '../companion';
 import type { VoxelCollision } from '../collision';
-import type { NavField } from '../nav';
+import type { NavColumn, NavField } from '../nav';
 import type { Object3D, Scene3D, Viewer, Vector3 } from '@manycore/aholo-viewer';
 
 export type Stage = 'boot' | 'title' | 'morning' | 'seam' | 'dive' | 'settle' | 'talk' | 'progress';
@@ -81,6 +81,11 @@ export class Game {
   /** 已加载世界的夜数（main.ts 启动即载第 1 夜） */
   private worldNight = 1;
   private worldReady: Promise<void> = Promise.resolve();
+  /** 本夜第几次下潜（回响抖动只按「本夜第几次潜」计，setNight 清零——跨夜不泄漏） */
+  private nightRunCount = 0;
+  /** 当夜 nav 可站柱缓存与最低可站面（坠落软复位用；beginDive 守卫通过后刷新） */
+  private navColumns: NavColumn[] = [];
+  private navFloorMin = 0;
 
   // 下潜运行时
   private timeLeft: number = NIGHTS[0]!.diveSeconds;
@@ -209,6 +214,7 @@ export class Game {
   /** 换夜：重建世界物与实体视觉、刷新 HUD，并后台预取该夜世界 */
   private setNight(idx: number) {
     this.nightIdx = idx;
+    this.nightRunCount = 0; // 抖动按「本夜第几次潜」计：换夜（含 enterNight 重进）清零
     const def = this.def;
     if (this.items) this.items.dispose(this.deps.scene);
     this.items = new WorldItems(this.deps.scene, this.deps.world.nav, def.loot, def.door);
@@ -230,6 +236,15 @@ export class Game {
   }
 
   private beginDive() {
+    // 换夜竞态守卫：调试直达 goto('dive') 会捕获换夜前已 resolve 的 worldReady 微任务，
+    // 可能把新夜配置跑在旧世界上（静默坠穿）。不一致=拒绝下潜，回晨间重走世界加载门控。
+    if (this.worldNight !== this.def.night) {
+      console.error(
+        `[守卫] 拒绝下潜：世界=第${this.worldNight}夜，配置=第${this.def.night}夜。回晨间重走加载门控。`,
+      );
+      this.goto('morning');
+      return;
+    }
     const def = this.def;
     this.screens.closeAll();
     this.stage = 'dive';
@@ -246,10 +261,14 @@ export class Game {
     this.ambientNext = 12;
     this.whisperNext = 8;
 
-    // 回响重玩：战利品价值微变（±echoJitter 文）
-    this.items.reset(this.runCount > 0 ? def.echoJitter : 0);
+    // 回响重玩：战利品价值微变（±echoJitter 文）——只看「本夜第几次潜」，换夜首潜不抖
+    this.items.reset(this.nightRunCount > 0 ? def.echoJitter : 0);
     this.entity.teleport(def.entity.start.x, def.entity.start.z);
     this.entity.forceState('wander');
+
+    // 坠落软复位基线：缓存当夜 nav 可站柱与最低可站面（守卫已保证 world=本夜）
+    this.navColumns = this.deps.world.nav.columns;
+    this.navFloorMin = this.navColumns.reduce((m, c) => Math.min(m, c.y), Infinity);
 
     // 幸存者遭遇槽（E2）：本夜启用才生成；结局与谢礼按本局重置
     this.survivorOutcome = '';
@@ -282,13 +301,11 @@ export class Game {
     this.hud.setVignette('dark'); // 手电初始关闭：暗角压视野=安全
     this.hud.setCountdown(this.timeLeft, false);
     this.hud.setGoal(0, this.items.loot.length, 0, def.bill);
-    this.hud.setCodex([]);
+    this.hud.resetCodex(); // 重建本夜图鉴：清掉上局 pushCodexSlot 的特殊所得（跨局不残留）
     this.deps.hint.textContent = '点击画面进入行走模式 · WASD 移动 / 鼠标转向 / E 拾取 / F 手电 / T 说话';
     this.deps.hint.style.opacity = '1';
     this.hud.bubble(this.bag.scene('opening'), this.archetype, 6000);
   }
-
-  private runCount = 0;
 
   private endDive(lostAll: boolean, reason: 'return' | 'door' | 'giveup') {
     if (this.diveOver) return;
@@ -330,7 +347,7 @@ export class Game {
     }
     // 夜进度：结算即解锁下一夜（灯暗一分不判死档）
     saveUnlockedNight(def.night + 1);
-    this.runCount++;
+    this.nightRunCount++;
     this.sfx.bell(reason === 'return');
     this.goto('settle');
   }
@@ -393,6 +410,9 @@ export class Game {
 
     // 玩家噪音（连续移动噪声 + HUD 噪音条）
     const ps = controls.playerState;
+
+    // 坠落软复位（兜底）：掉出世界（低于 nav 最低可站面 5m）→ 托回最近可站柱
+    if (this.checkFallReset(ps)) return;
     const moveNoise = ps.moving
       ? ps.gait === 'sprint'
         ? def.noise.sprint
@@ -674,6 +694,30 @@ export class Game {
       );
     }
   };
+
+  // ---- 坠落软复位（志怪兜底；行走控制器主体不动） ----
+
+  /** y 低于当夜 nav 最低可站面 -5m=掉出世界 → 托回最近可站柱。保留已拾取物与计时；
+   *  黑闪 0.3s + 「乱流托住了你」一行字。仅下潜阶段生效（update 只在 dive 跑）。 */
+  private checkFallReset(ps: PlayerState): boolean {
+    if (this.navColumns.length === 0 || ps.position.y >= this.navFloorMin - 5) return false;
+    let best = this.navColumns[0]!;
+    let bestD = Infinity;
+    for (const c of this.navColumns) {
+      const d = (c.x - ps.position.x) ** 2 + (c.z - ps.position.z) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    }
+    this.deps.controls.startAt(best.x, best.z, ps.yaw);
+    this.hud.flashBlack(300);
+    this.hud.bubble('乱流托住了你。', this.archetype, 3200);
+    console.warn(
+      `[兜底] 坠落软复位：托回可站柱 (${best.x.toFixed(1)}, ${best.z.toFixed(1)}) 带面 y=${best.y.toFixed(1)}`,
+    );
+    return true;
+  }
 
   // ---- 辅助 ----
 
