@@ -15,12 +15,22 @@ export interface BillCardData {
   caught: number;
   nearMiss: number;
   spoken: number;
+  /** 幸存者遭遇结局字样（E2）：救下旅人/无视求助/抢夺旅人/旅人失踪；无遭遇则缺省 */
+  survivor?: string;
   quip: string;
   date: string; // YYYY-MM-DD
 }
 
 function fmt(n: number) {
   return `${n} 文`;
+}
+
+/** 遭遇行文本（DOM 卡与 canvas 导出共用，E2 追加幸存者结局字样） */
+function encounterLine(d: BillCardData): string {
+  return (
+    `遭遇：${d.caught > 0 ? `被实体抓住 ×${d.caught}` : '全身而退'}${d.nearMiss ? ` · 逼近 ${d.nearMiss} 次` : ''}${d.spoken ? ` · 黑暗开口 ${d.spoken} 次` : ''}` +
+    (d.survivor ? ` · ${d.survivor}` : '')
+  );
 }
 
 /** 结算页内嵌的 DOM 卡片（视觉与导出 PNG 同款） */
@@ -38,7 +48,7 @@ export function buildBillCardDom(d: BillCardData): HTMLElement {
     <div class="bc-loot">${items}<span class="bc-total">共 ${fmt(d.total)}</span></div>
     <div class="bc-bill">账单 ${fmt(d.bill)} → ${d.paid ? '<b class="bc-ok">付清 · 灯亮</b>' : `<b class="bc-bad">差 ${fmt(d.bill - d.total)} · 灯暗一分</b>`}</div>
     <div class="bc-mid">
-      <span>遭遇：${d.caught > 0 ? `被实体抓住 ×${d.caught}` : '全身而退'}${d.nearMiss ? ` · 逼近 ${d.nearMiss} 次` : ''}${d.spoken ? ` · 黑暗开口 ${d.spoken} 次` : ''}</span>
+      <span>${encounterLine(d)}</span>
     </div>
     <div class="bc-quip">「${d.quip}」 —— 伙计</div>
     <div class="bc-foot"><span>长夜驿站 · ${d.date}</span><span class="bc-ai">本作 3D 资产由 AI 生成</span></div>
@@ -96,7 +106,7 @@ export function saveBillCardPng(d: BillCardData) {
   // 遭遇
   g.font = '18px "KaiTi","STKaiti",serif';
   g.fillStyle = '#b8c0cf';
-  const mid = `遭遇：${d.caught > 0 ? `被实体抓住 ×${d.caught}` : '全身而退'}${d.nearMiss ? ` · 逼近 ${d.nearMiss} 次` : ''}${d.spoken ? ` · 黑暗开口 ${d.spoken} 次` : ''}`;
+  const mid = encounterLine(d);
   g.fillText(mid, 44, 204);
 
   // 伙计吐槽（自动换行简化：单行截断）

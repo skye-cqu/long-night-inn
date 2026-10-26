@@ -12,7 +12,7 @@
 import { nightCn, type LootDef, type NightDef } from './config';
 
 /** 图鉴占位字标（TODO(Lux3D 信物)：替换为信物 GLB 缩略图） */
-const ICONS: Record<string, string> = { bottle: '瓶', lantern: '灯', watch: '表' };
+const ICONS: Record<string, string> = { bottle: '瓶', lantern: '灯', watch: '表', pack: '包' };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -27,7 +27,7 @@ export class Hud {
   private countdown: HTMLElement;
   private nightLabel: HTMLElement;
   private codexRow: HTMLElement;
-  private codexSlots: Array<{ slot: HTMLElement; val: HTMLElement }> = [];
+  private codexSlots: Array<{ id: string; value: number; slot: HTMLElement; val: HTMLElement }> = [];
   private noiseFill: HTMLElement;
   private staminaFill: HTMLElement;
   private prompt: HTMLElement;
@@ -139,9 +139,21 @@ export class Hud {
       slot.append(el('div', 'g-codex-name', def.name));
       const val = el('div', 'g-codex-val', `${def.value} 文`);
       slot.append(val);
-      this.codexSlots.push({ slot, val });
+      this.codexSlots.push({ id: def.id, value: def.value, slot, val });
       this.codexRow.append(slot);
     }
+  }
+
+  /** 追加图鉴格（E2：抢夺所得「旅人的油纸包」——不在当晚信物表内的特殊所得） */
+  pushCodexSlot(id: string, shape: string, name: string, value: number) {
+    const slot = el('div', 'g-codex-slot');
+    slot.append(el('div', 'g-codex-icon', ICONS[shape] ?? '物'));
+    slot.append(el('div', 'g-codex-name', name));
+    const val = el('div', 'g-codex-val', `${value} 文`);
+    slot.append(val);
+    this.codexSlots.push({ id, value, slot, val });
+    this.codexRow.append(slot);
+    return id;
   }
 
   show(v: boolean) {
@@ -171,13 +183,13 @@ export class Hud {
     this.goal.classList.toggle('ok', value >= bill);
   }
 
-  setCodex(takenIds: string[], defs: LootDef[]) {
-    defs.forEach((def, i) => {
-      const c = this.codexSlots[i]!;
-      const taken = takenIds.includes(def.id);
+  setCodex(takenIds: string[]) {
+    // 槽位自带 id/value（信物表 + E2 特殊所得），按 id 点亮
+    for (const c of this.codexSlots) {
+      const taken = takenIds.includes(c.id);
       c.slot.classList.toggle('lit', taken);
-      if (taken) c.val.textContent = `${def.value} 文 ✓`;
-    });
+      if (taken) c.val.textContent = `${c.value} 文 ✓`;
+    }
   }
 
   setPrompt(text: string | null) {

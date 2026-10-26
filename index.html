@@ -286,6 +286,31 @@
       display: flex; gap: 8px; pointer-events: auto; z-index: 35;
     }
     .g-talkbox-input { width: min(460px, 70vw); }
+
+    /* ===== 幸存者遭遇对话卡（E2）===== */
+    .g-surv {
+      position: absolute; left: 50%; bottom: 130px; transform: translateX(-50%);
+      width: min(520px, 88vw); pointer-events: auto; z-index: 34;
+      background: rgba(10, 12, 18, 0.94); border: 1px solid rgba(201, 168, 107, 0.65);
+      border-radius: 6px; padding: 14px 18px 16px;
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.6);
+      animation: surv-in 0.35s ease-out;
+    }
+    @keyframes surv-in { 0% { opacity: 0; transform: translate(-50%, 14px); } 100% { opacity: 1; transform: translate(-50%, 0); } }
+    .g-surv-name {
+      color: var(--gold); font-family: KaiTi, STKaiti, serif; font-size: 15px; letter-spacing: 4px;
+      border-bottom: 1px dashed rgba(201, 168, 107, 0.35); padding-bottom: 5px; margin-bottom: 8px;
+    }
+    .g-surv-plea {
+      margin: 0 0 12px; color: var(--paper);
+      font: 15px/1.9 KaiTi, STKaiti, serif;
+    }
+    .g-surv-choices { display: flex; gap: 8px; flex-wrap: wrap; }
+    .g-surv-key {
+      display: inline-block; margin-left: 6px; padding: 0 5px;
+      border: 1px solid rgba(232, 226, 212, 0.4); border-radius: 3px;
+      font: 11px Consolas, monospace; color: var(--dim);
+    }
   </style>
 </head>
 <body>

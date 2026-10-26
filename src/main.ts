@@ -212,6 +212,7 @@ const T0 = performance.now();
     // 玩法状态机（标题页在资产就绪后弹出；标题遮挡期间世界已在后台加载完毕）
     game = new Game({
       scene: gameScene,
+      viewer,
       world,
       loadNightWorld,
       controls,

@@ -22,6 +22,9 @@ export interface StartChoice {
   archetype: Archetype;
 }
 
+/** 幸存者遭遇三选（E2） */
+export type SurvivorChoice = 'save' | 'ignore' | 'rob';
+
 export interface SettleView {
   billCard: BillCardData;
   lampText: string;
@@ -384,9 +387,49 @@ export class Screens {
     this.mount(scr);
   }
 
+  // ---- 幸存者对话卡（E2 遭遇：现场抉择；数字键 1/2/3 快选，鼠标点击亦可） ----
+  survivorDialog(plea: string, onChoice: (c: SurvivorChoice) => void) {
+    if (this.survEl) return;
+    const box = h('div', 'g-surv');
+    box.innerHTML = `
+      <div class="g-surv-name">雾里的旅人</div>
+      <p class="g-surv-plea">「${plea}」</p>
+    `;
+    const row = h('div', 'g-surv-choices');
+    const mk = (c: SurvivorChoice, label: string, cls: string, key: string) => {
+      const b = h('button', `g-btn small ${cls}`, `${label} <span class="g-surv-key">${key}</span>`);
+      b.onclick = () => {
+        this.sfx.click();
+        this.closeSurvivorDialog();
+        onChoice(c);
+      };
+      return b;
+    };
+    row.append(mk('save', '带他去驿站（救）', 'primary', '1'), mk('ignore', '转身走开（不理）', 'ghost', '2'), mk('rob', '抢下油纸包（抢）', 'danger', '3'));
+    box.append(row);
+    this.box.append(box);
+    this.survEl = box;
+  }
+
+  private survEl: HTMLElement | null = null;
+
+  closeSurvivorDialog() {
+    this.survEl?.remove();
+    this.survEl = null;
+  }
+
+  get survivorDialogOpen() {
+    return this.survEl !== null;
+  }
+
+  /** 程序化选择（调试/自动化用）：不开卡直接按结局走 */
+  chooseSurvivor(c: SurvivorChoice, onChoice: (c: SurvivorChoice) => void) {
+    this.closeSurvivorDialog();
+    onChoice(c);
+  }
+
   // ---- 伙计说话框（T） ----
-  talkbox(onSubmit: (text: string) => void) {
-    const box = h('div', 'g-talkbox');
+  talkbox(onSubmit: (text: string) => void) {    const box = h('div', 'g-talkbox');
     const input = document.createElement('input');
     input.className = 'g-talkbox-input';
     input.placeholder = '对伙计说点什么……（回车送出 · 这会产生大噪音）';
@@ -431,6 +474,7 @@ export class Screens {
   closeAll() {
     this.clear();
     this.closeTalkbox();
+    this.closeSurvivorDialog();
   }
 }
 
@@ -442,6 +486,10 @@ const LEDGER_LABEL: Record<string, string> = {
   unpaid: '欠账',
   paid: '付清',
   return: '归航',
+  survivor_saved: '救旅人',
+  survivor_ignored: '无视',
+  survivor_robbed: '抢夺',
+  survivor_lost: '失踪',
 };
 
 function ledgerDetailText(r: LedgerRecord): string {
@@ -461,6 +509,14 @@ function ledgerDetailText(r: LedgerRecord): string {
       return `${String(d.total ?? 0)} 文两讫`;
     case 'return':
       return `剩 ${String(d.secondsLeft ?? 0)}s 推门`;
+    case 'survivor_saved':
+      return `把旅人带回了门口，谢礼 ${String(d.bonus ?? 0)} 文`;
+    case 'survivor_ignored':
+      return `听见呼救，没有回头`;
+    case 'survivor_robbed':
+      return `夺走旅人油纸包（${String(d.value ?? 0)} 文），循声者至`;
+    case 'survivor_lost':
+      return `同行的人散在雾里`;
     default:
       return '';
   }

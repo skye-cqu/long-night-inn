@@ -8,19 +8,25 @@
  */
 import { NIGHTS, type Archetype, type NightDef } from './config';
 import { Ledger, loadUnlockedNight, saveUnlockedNight, type LedgerEventType } from './ledger';
-import { ARCHETYPE_LINES, LineBag } from './lines';
+import { ARCHETYPE_LINES, LineBag, pickPlea } from './lines';
 import { Sfx } from './audio';
 import { WorldItems, type LootItem } from './items';
 import { Entity } from './entity';
+import { Survivor } from './survivor';
 import { Hud } from './hud';
-import { Screens } from './screens';
+import { Screens, type SurvivorChoice } from './screens';
 import type { WalkControls } from '../walk-controls';
 import type { Companion } from '../companion';
 import type { VoxelCollision } from '../collision';
 import type { NavField } from '../nav';
-import type { Scene3D } from '@manycore/aholo-viewer';
+import type { Object3D, Scene3D, Viewer, Vector3 } from '@manycore/aholo-viewer';
 
 export type Stage = 'boot' | 'title' | 'morning' | 'seam' | 'dive' | 'settle' | 'talk' | 'progress';
+
+/** 幸存者遭遇结算（E2）：+5 文谢礼 */
+const SURVIVOR_BONUS = 5;
+/** 抢夺所得「旅人的油纸包」（图鉴第 4 格） */
+const PAPER_VALUE = 10;
 
 /** 当前世界运行时句柄（main.ts 持有并在换夜时原地更新字段） */
 export interface WorldHandle {
@@ -32,6 +38,7 @@ export interface WorldHandle {
 
 export interface GameDeps {
   scene: Scene3D;
+  viewer: Viewer;
   world: WorldHandle;
   /** 按夜懒加载世界资产（spz/体素/nav），完成后更新 world 句柄 */
   loadNightWorld(def: NightDef): Promise<void>;
@@ -56,6 +63,10 @@ export class Game {
   private bag: LineBag;
   private items!: WorldItems;
   private entity: Entity;
+  /** 幸存者遭遇（E2；N1 survivor.enabled=false 全程为 null） */
+  private survivor: Survivor | null = null;
+  private survivorOutcome: '' | '救下旅人' | '无视求助' | '抢夺旅人' | '旅人失踪' = '';
+  private survivorBonus = 0;
   private hud: Hud;
   private screens: Screens;
   private archetype: Archetype = '毒舌';
@@ -240,6 +251,23 @@ export class Game {
     this.entity.teleport(def.entity.start.x, def.entity.start.z);
     this.entity.forceState('wander');
 
+    // 幸存者遭遇槽（E2）：本夜启用才生成；结局与谢礼按本局重置
+    this.survivorOutcome = '';
+    this.survivorBonus = 0;
+    if (def.survivor.enabled) {
+      if (!this.survivor) {
+        this.survivor = new Survivor(this.deps.scene, this.deps.world.nav, def.survivor.x, def.survivor.z);
+        this.survivor.load(def.survivor.glb, this.deps.viewer, this.deps.scene).catch((e: unknown) =>
+          console.warn('[旅人] GLB 加载失败，保留占位:', e),
+        );
+      }
+      this.survivor.state = 'waiting';
+      this.survivor.announced = false;
+      this.survivor.place(def.survivor.x, def.survivor.z);
+    } else if (this.survivor) {
+      this.survivor.root.visible = false;
+    }
+
     const { spawn } = def;
     this.deps.controls.startAt(spawn.x, spawn.z, spawn.yaw);
     this.deps.controls.setRuntimeEnabled(true);
@@ -254,7 +282,7 @@ export class Game {
     this.hud.setVignette('dark'); // 手电初始关闭：暗角压视野=安全
     this.hud.setCountdown(this.timeLeft, false);
     this.hud.setGoal(0, this.items.loot.length, 0, def.bill);
-    this.hud.setCodex([], def.loot);
+    this.hud.setCodex([]);
     this.deps.hint.textContent = '点击画面进入行走模式 · WASD 移动 / 鼠标转向 / E 拾取 / F 手电 / T 说话';
     this.deps.hint.style.opacity = '1';
     this.hud.bubble(this.bag.scene('opening'), this.archetype, 6000);
@@ -278,6 +306,22 @@ export class Game {
     const lostValue = lostAll ? this.held.reduce((s, i) => s + i.value, 0) : 0;
     if (lostAll) this.held = [];
 
+    // 幸存者遭遇结算（E2）：带回门口=救下（+5 文谢礼）；门关/放弃=旅人失踪
+    if (this.survivor?.state === 'following') {
+      if (reason === 'return') {
+        this.survivor.state = 'saved';
+        this.survivor.root.visible = false;
+        this.survivorOutcome = '救下旅人';
+        this.survivorBonus = SURVIVOR_BONUS;
+        this.ledger.add(def.night, 'survivor_saved', { bonus: SURVIVOR_BONUS });
+      } else {
+        this.survivor.state = 'lost';
+        this.survivor.root.visible = false;
+        this.survivorOutcome = '旅人失踪';
+        this.ledger.add(def.night, 'survivor_lost', {});
+      }
+    }
+
     if (reason === 'return') {
       this.ledger.add(def.night, 'return', { secondsLeft: Math.round(this.timeLeft) });
     } else {
@@ -293,7 +337,7 @@ export class Game {
 
   private openSettle() {
     const def = this.def;
-    const total = this.held.reduce((s, i) => s + i.value, 0);
+    const total = this.held.reduce((s, i) => s + i.value, 0) + this.survivorBonus;
     const paid = total >= def.bill;
     if (paid) this.ledger.add(def.night, 'paid', { total, bill: def.bill });
     else this.ledger.add(def.night, 'unpaid', { total, bill: def.bill, shortfall: def.bill - total });
@@ -313,6 +357,7 @@ export class Game {
           caught: this.caughtCount,
           nearMiss: this.nearMiss,
           spoken: this.spoken,
+          survivor: this.survivorOutcome || undefined,
           quip,
           date: new Date().toISOString().slice(0, 10),
         },
@@ -406,6 +451,21 @@ export class Game {
       this.hud.bubble(this.bag.scene('dive'), this.archetype, 4500);
     }
 
+    // 幸存者遭遇（E2）：接近低语一次 + 跟随/待机动画 + 交谈提示
+    if (this.survivor?.isPresent) {
+      const sv = this.survivor;
+      sv.update(dt, ps.position, ps.yaw);
+      const sd = Math.hypot(sv.pos.x - ps.position.x, sv.pos.z - ps.position.z);
+      if (sv.state === 'waiting') {
+        if (sd < 5 && !sv.announced) {
+          sv.announced = true;
+          this.sfx.whisper();
+          this.hud.bubble(this.bag.scene('survivor').replace('{dir}', this.relativeDir(ps.position, ps.yaw, sv.pos.x, sv.pos.z)), this.archetype, 5000);
+        }
+        if (sd < 2.5 && !this.screens.survivorDialogOpen) this.hud.setPrompt('按 E 与旅人交谈');
+      }
+    }
+
     // 交互提示
     const near = this.items.nearest(ps.position);
     const doorD = Math.hypot(ps.position.x - def.door.x, ps.position.z - def.door.z);
@@ -414,7 +474,7 @@ export class Game {
     } else if (doorD < def.doorReturnRadius) {
       const canReturn = this.held.length > 0 || this.caughtCount > 0 || this.timeLeft < 30;
       this.hud.setPrompt(canReturn ? '按 E 推门归航' : '门在这里。天亮前带着值钱物回来。');
-    } else {
+    } else if (!(this.survivor?.isPresent && this.survivor.state === 'waiting' && Math.hypot(this.survivor.pos.x - ps.position.x, this.survivor.pos.z - ps.position.z) < 2.5)) {
       this.hud.setPrompt(null);
     }
 
@@ -431,10 +491,19 @@ export class Game {
     this.hud.flashBlack();
     this.held = []; // 当日战利品散落（丢失），不判死
     this.ledger.add(def.night, 'caught', { lost, at: this.deps.controls.position.toArray?.() ?? null });
+    // 旅人独立判定从简：玩家被抓 → 跟随中的旅人失踪（不做旅人独立被抓）
+    if (this.survivor?.state === 'following') {
+      this.survivor.state = 'lost';
+      this.survivor.root.visible = false;
+      this.survivorOutcome = '旅人失踪';
+      this.ledger.add(def.night, 'survivor_lost', {});
+      setTimeout(() => this.hud.bubble(this.bag.scene('lost'), this.archetype, 5500), 3200);
+    }
     // 被拖回门口
     const { spawn } = def;
     this.deps.controls.startAt(spawn.x, spawn.z, spawn.yaw);
-    this.hud.setGoal(this.heldCount(), this.items.loot.length, 0, def.bill);
+    this.hud.setCodex(this.held.map((i) => i.def.id));
+    this.hud.setGoal(this.heldCount(), this.items.loot.length + (this.survivorOutcome === '抢夺旅人' ? 1 : 0), this.heldValue(), def.bill);
     setTimeout(() => this.hud.bubble(this.bag.scene('caught'), this.archetype, 6000), 500);
   }
 
@@ -455,10 +524,7 @@ export class Game {
       value: item.value,
       deep: Math.hypot(item.def.x - def.door.x, item.def.z - def.door.z) > 10,
     });
-    this.hud.setCodex(
-      this.held.map((i) => i.def.id),
-      def.loot,
-    );
+    this.hud.setCodex(this.held.map((i) => i.def.id));
     this.hud.setGoal(this.heldCount(), this.items.loot.length, this.heldValue(), def.bill);
     this.hud.bubble(this.bag.scene('pickup'), this.archetype, 3800);
     // 拾取=中噪
@@ -475,6 +541,69 @@ export class Game {
     if (!canReturn) return false;
     this.endDive(false, 'return');
     return true;
+  }
+
+  // ---- 幸存者遭遇（E2）----
+
+  /** E 开对话卡（等待状态 2.5m 内；不开卡返回 false 走后续交互） */
+  private trySurvivorTalk(): boolean {
+    const sv = this.survivor;
+    if (!sv || sv.state !== 'waiting' || this.screens.survivorDialogOpen) return false;
+    const ps = this.deps.controls.playerState;
+    const d = Math.hypot(sv.pos.x - ps.position.x, sv.pos.z - ps.position.z);
+    if (d >= 2.5) return false;
+    this.screens.survivorDialog(pickPlea(), (c) => this.applySurvivorChoice(c));
+    return true;
+  }
+
+  /** 三选落地：救（跟随）/ 不理（记账即止）/ 抢（油纸包+大噪音） */
+  applySurvivorChoice(choice: SurvivorChoice) {
+    const sv = this.survivor;
+    if (!sv || sv.state !== 'waiting') return;
+    const def = this.def;
+    const ps = this.deps.controls.playerState;
+    if (choice === 'save') {
+      sv.state = 'following';
+      this.hud.bubble(this.bag.scene('saved'), this.archetype, 4500);
+    } else if (choice === 'ignore') {
+      sv.state = 'ignored';
+      this.survivorOutcome = '无视求助';
+      this.ledger.add(def.night, 'survivor_ignored', {});
+    } else {
+      // 抢：得「旅人的油纸包」（图鉴第 4 格，值 10 文）+ 大噪音（实体立刻循声而来）
+      sv.state = 'robbed';
+      sv.root.visible = false;
+      this.survivorOutcome = '抢夺旅人';
+      this.ledger.add(def.night, 'survivor_robbed', { value: PAPER_VALUE });
+      this.held.push(this.makePaperItem());
+      this.hud.pushCodexSlot('paper', 'pack', '旅人的油纸包', PAPER_VALUE);
+      this.hud.setCodex(this.held.map((i) => i.def.id));
+      this.hud.setGoal(this.heldCount(), this.items.loot.length + 1, this.heldValue(), def.bill);
+      this.sfx.pickup();
+      this.entity.hear({ x: ps.position.x, z: ps.position.z, level: def.noise.speak });
+      this.hud.bubble(this.bag.scene('rob'), this.archetype, 5000);
+    }
+  }
+
+  /** 旅人的油纸包：不落地的特殊所得（held 计入账单总额） */
+  private makePaperItem(): LootItem {
+    return {
+      def: {
+        id: 'paper',
+        name: '旅人的油纸包',
+        value: PAPER_VALUE,
+        x: 0,
+        z: 0,
+        color: 0xc9a86b,
+        glowColor: 0xffe2b0,
+        shape: 'watch',
+      },
+      root: null as unknown as Object3D,
+      pos: null as unknown as Vector3,
+      baseY: 0,
+      taken: false,
+      value: PAPER_VALUE,
+    };
   }
 
   private toggleFlashlight() {
@@ -504,12 +633,17 @@ export class Game {
     }
     if (this.screens.talkboxOpen) return; // 输入框自己的 keydown 处理
     if (e.code === 'KeyE') {
-      if (!this.tryPickup()) this.tryReturn();
+      if (!this.tryPickup() && !this.trySurvivorTalk()) this.tryReturn();
     } else if (e.code === 'KeyF') {
       this.toggleFlashlight();
     } else if (e.code === 'KeyT') {
       e.preventDefault();
       this.openTalkbox();
+    } else if (this.screens.survivorDialogOpen && (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3')) {
+      // 遭遇现场抉择：指针锁定时鼠标点不了，数字键 1/2/3 快选
+      const c: SurvivorChoice = e.code === 'Digit1' ? 'save' : e.code === 'Digit2' ? 'ignore' : 'rob';
+      this.screens.closeSurvivorDialog();
+      this.applySurvivorChoice(c);
     }
   };
 
@@ -580,6 +714,9 @@ export class Game {
       spoken: this.spoken,
       fear: +this.deps.companion.fear.toFixed(2),
       entity: this.entity.debug,
+      survivor: this.survivor?.debug ?? null,
+      survivorOutcome: this.survivorOutcome,
+      survivorBonus: this.survivorBonus,
       ftue: this.ftue,
       sfx: this.sfx.enabled,
     };
@@ -608,6 +745,17 @@ export class Game {
       },
       entityChase: () => this.entity.forceState('chase'),
       entityTeleport: (x: number, z: number) => this.entity.teleport(x, z),
+      /** 遭遇调试：不开卡直接按三选落地（自动化驱动用） */
+      survivorChoice: (c: SurvivorChoice) => this.applySurvivorChoice(c),
+      /** 遭遇调试：传送旅人（跟随/遭遇测试用） */
+      survivorTeleport: (x: number, z: number) => {
+        const sv = this.survivor;
+        if (!sv) return false;
+        sv.place(x, z);
+        return true;
+      },
+      /** 遭遇调试：开对话卡（不出 E 也能触发） */
+      survivorDialog: () => this.trySurvivorTalk(),
       /** 取证：隐藏/显示战利品与门（像素差对照用） */
       showItems: (v: boolean) => {
         this.items.loot.forEach((i) => (i.root.visible = v && !i.taken));

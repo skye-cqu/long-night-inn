@@ -8,18 +8,33 @@
  * - night: 第几夜（1..7，回响夜在 1 上重复但 ts 不同）
  * - ts: 毫秒时间戳（排序与「昨晚」判定用）
  * - type: 事件类型
- *     loot        拾取战利品   detail: { id, name, value, deep: 是否深处 }
- *     caught      被实体抓住   detail: { lost: 丢失战利品数, at: 抓捕点 }
- *     noise_speak 与伙计说话（大噪音） detail: { text }
- *     door_close  门关未归     detail: { lostValue }
- *     unpaid      账单未付清   detail: { total, bill, shortfall }
- *     paid        账单付清     detail: { total, bill }        (v1.1 增补)
- *     return      归航         detail: { secondsLeft }        (v1.1 增补)
+ *     loot            拾取战利品   detail: { id, name, value, deep: 是否深处 }
+ *     caught          被实体抓住   detail: { lost: 丢失战利品数, at: 抓捕点 }
+ *     noise_speak     与伙计说话（大噪音） detail: { text }
+ *     door_close      门关未归     detail: { lostValue }
+ *     unpaid          账单未付清   detail: { total, bill, shortfall }
+ *     paid            账单付清     detail: { total, bill }        (v1.1 增补)
+ *     return          归航         detail: { secondsLeft }        (v1.1 增补)
+ *     survivor_saved  幸存者·救下（带回门口） detail: { bonus }    (E2 增补)
+ *     survivor_ignored 幸存者·无视求助          detail: {}        (E2 增补)
+ *     survivor_robbed 幸存者·抢夺（得油纸包+大噪音） detail: { value } (E2 增补)
+ *     survivor_lost   幸存者·旅人失踪（玩家被抓/门关） detail: {}    (E2 增补)
  * - detail: 任意 JSON（导演 agent 自行解释；多余字段无害）
  * 导演 agent 只读不写；游戏运行时追加。schema 向后兼容（只增字段不改语义）。
  */
 
-export type LedgerEventType = 'loot' | 'caught' | 'noise_speak' | 'door_close' | 'unpaid' | 'paid' | 'return';
+export type LedgerEventType =
+  | 'loot'
+  | 'caught'
+  | 'noise_speak'
+  | 'door_close'
+  | 'unpaid'
+  | 'paid'
+  | 'return'
+  | 'survivor_saved'
+  | 'survivor_ignored'
+  | 'survivor_robbed'
+  | 'survivor_lost';
 
 export interface LedgerRecord {
   night: number;
