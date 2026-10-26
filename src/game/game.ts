@@ -614,6 +614,13 @@ export class Game {
         this.items.doorRoot.visible = v;
         return v;
       },
+      /** 取证：单件战利品显隐（webp 贴图上屏检验等像素级对照用） */
+      showItem: (id: string, v: boolean) => {
+        const it = this.items.loot.find((i) => i.def.id === id);
+        if (!it) return false;
+        it.root.visible = v && !it.taken;
+        return true;
+      },
       itemPositions: () => this.items.loot.map((i) => ({ id: i.def.id, x: i.def.x, z: i.def.z, taken: i.taken, value: i.value })),
       setArchetype: (a: Archetype) => {
         this.archetype = a;
