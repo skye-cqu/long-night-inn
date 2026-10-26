@@ -243,37 +243,45 @@ function loop(t: number) {
   const dt = Math.min((t - lastT) / 1000, 0.5);
   lastT = t;
 
-  if (controls) {
-    controls.update(dt, camera);
-    (viewer as never as { forceNextFrameRender?: boolean }).forceNextFrameRender = true;
-    if (companion) {
-      const ps = controls.playerState;
-      companion.update(ps.position, ps.yaw, dt);
+  // 单帧异常兜底（E10 验收 Bug#1 后半）：此前 loop 内任一异常会让
+  // requestAnimationFrame(loop) 不再调度——时钟/实体/HUD 全冻结，只能 reload。
+  // 现在 console.error 后跳过该帧继续下一帧（E14 自动化验收依赖此兜底）。
+  try {
+    if (controls) {
+      controls.update(dt, camera);
+      (viewer as never as { forceNextFrameRender?: boolean }).forceNextFrameRender = true;
+      if (companion) {
+        const ps = controls.playerState;
+        companion.update(ps.position, ps.yaw, dt);
+      }
     }
-  }
-  if (game) game.update(dt, t / 1000);
-  viewer.render();
+    if (game) game.update(dt, t / 1000);
+    viewer.render();
 
-  frames++;
-  if (t - fpsWindowStart > 500) {
-    state.fps = Math.round((frames * 1000) / (t - fpsWindowStart));
-    frames = 0;
-    fpsWindowStart = t;
-    if (debugHud) {
-      const p = controls?.position;
-      const cp = companion?.position;
-      state.camPos = p ? { x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) } : null;
-      state.yaw = +(controls ? (controls.yaw * 180) / Math.PI : 0).toFixed(1);
-      state.companionAnim = companion?.animName ?? 'loading';
-      state.companionPos = cp ? { x: +cp.x.toFixed(2), y: +cp.y.toFixed(2), z: +cp.z.toFixed(2) } : null;
-      state.companionSpeed = +(companion?.speed ?? 0).toFixed(2);
-      hud.textContent =
-        `phase=${state.phase} fps=${state.fps} up=${upSign}\n` +
-        `cam=${state.camPos ? JSON.stringify(state.camPos) : '-'} yaw=${state.yaw}°\n` +
-        `伙计: ${state.companionAnim} v=${state.companionSpeed} ${state.companionPos ? JSON.stringify(state.companionPos) : '-'}\n` +
-        (game ? `stage=${(game as { stage?: string }).stage}\n` : '') +
-        (state.errors.length ? `errors[${state.errors.length}]` : '');
+    frames++;
+    if (t - fpsWindowStart > 500) {
+      state.fps = Math.round((frames * 1000) / (t - fpsWindowStart));
+      frames = 0;
+      fpsWindowStart = t;
+      if (debugHud) {
+        const p = controls?.position;
+        const cp = companion?.position;
+        state.camPos = p ? { x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) } : null;
+        state.yaw = +(controls ? (controls.yaw * 180) / Math.PI : 0).toFixed(1);
+        state.companionAnim = companion?.animName ?? 'loading';
+        state.companionPos = cp ? { x: +cp.x.toFixed(2), y: +cp.y.toFixed(2), z: +cp.z.toFixed(2) } : null;
+        state.companionSpeed = +(companion?.speed ?? 0).toFixed(2);
+        hud.textContent =
+          `phase=${state.phase} fps=${state.fps} up=${upSign}\n` +
+          `cam=${state.camPos ? JSON.stringify(state.camPos) : '-'} yaw=${state.yaw}°\n` +
+          `伙计: ${state.companionAnim} v=${state.companionSpeed} ${state.companionPos ? JSON.stringify(state.companionPos) : '-'}\n` +
+          (game ? `stage=${(game as { stage?: string }).stage}\n` : '') +
+          (state.errors.length ? `errors[${state.errors.length}]` : '');
+      }
     }
+  } catch (err) {
+    console.error('[loop] 单帧异常（跳过该帧，rAF 继续）:', err);
+    errors.push('loop: ' + ((err as { message?: string })?.message ?? String(err)));
   }
   requestAnimationFrame(loop);
 }
@@ -295,7 +303,9 @@ function loop(t: number) {
     controls ? { x: +controls.position.x.toFixed(3), y: +controls.position.y.toFixed(3), z: +controls.position.z.toFixed(3) } : null,
   setYaw: (yaw: number) => controls?.setYaw(yaw),
   turn: (rad: number) => controls && controls.setYaw(controls.yaw + rad),
-  setCam: (x: number, y: number, z: number, yawRad: number) => {
+  // yawRad 缺省 0：E10 验收 Bug#1——自动化路径常只传 (x,y,z)，undefined 会让
+  // controls.setYaw 后主循环 .toFixed 抛 TypeError 永久断 rAF 链
+  setCam: (x: number, y: number, z: number, yawRad = 0) => {
     if (!controls) return null;
     controls.position.set(x, y, z);
     controls.setYaw(yawRad);

@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- 内联 data-uri favicon：dev server 无 favicon.ico 的 404 噪音一行消除（E10 观察#5） -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='6' y='10' width='4' height='4' rx='1' fill='%238a93a6'/%3E%3Cpath d='M4 6a4 4 0 0 1 8 0v4h-8z' fill='%23c9a86b'/%3E%3C/svg%3E" />
   <title>长夜驿站 · 第一夜</title>
   <!-- 生产构建用：viewer 保持 external，由该 importmap 指向随 dist 复制的
        /vendor/aholo-viewer/（worker 相对路径依赖同目录文件）。dev 下此表不生效。 -->
