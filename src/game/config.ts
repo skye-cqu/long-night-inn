@@ -156,7 +156,8 @@ export const N1: NightDef = {
   survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
 };
 
-/** 第二夜「水墨江南 × 锈蚀废土」——世界=world-n2（plan-n2-points.mjs 体素 BFS 选点） */
+/** 第二夜「水墨江南 × 锈蚀废土」——世界=world-n2（plan-n2-points.mjs 体素 BFS 选点；
+ * E2 起玩家柱口径=连续实心 ≥0.5m 才算墙（贴地植被可穿），可走 41%/主块 148 格） */
 export const N2: NightDef = {
   night: 2,
   seedName: '水墨江南 × 锈蚀废土',
@@ -173,21 +174,21 @@ export const N2: NightDef = {
     voxelMeta: './assets/collision-n2.voxel-meta.json',
     voxelBin: './assets/collision-n2.voxel.bin',
   },
-  // 选点（plan-n2-points.mjs）：门=主连通块外缘；浅/中/深=门 BFS 深度 1/2/3m
-  door: { x: -4.45, z: 1.05 },
+  // 选点（plan-n2-points.mjs，E2 重选）：门=主连通块外缘最远角；浅/中/深=门 BFS 6/11.5/17m
+  door: { x: -8.95, z: -2.45 },
   doorReturnRadius: 1.5,
-  spawn: { x: -4.45, z: 1.05, yaw: -2.83 },
+  spawn: { x: -8.95, z: -2.45, yaw: 0.59 },
   loot: [
-    { id: 'oil', name: '灯油瓶', value: 8, x: -4.95, z: 0.55, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
-    { id: 'lantern', name: '铜灯笼', value: 10, x: -5.45, z: 0.05, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
-    { id: 'watch', name: '旧怀表', value: 15, x: -5.45, z: -0.95, color: 0xd8d8e0, glowColor: 0xfff2cc, shape: 'watch', glb: './assets/token-watch.glb' },
+    { id: 'oil', name: '灯油瓶', value: 8, x: -6.95, z: 0.55, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
+    { id: 'lantern', name: '铜灯笼', value: 10, x: -1.45, z: 1.55, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
+    { id: 'watch', name: '旧怀表', value: 15, x: 0.55, z: -1.95, color: 0xd8d8e0, glowColor: 0xfff2cc, shape: 'watch', glb: './assets/token-watch.glb' },
   ],
   pickupRadius: 1.6,
   entity: {
     name: '锈声者',
     // 游荡区=plan-n2-points.mjs 深度>40% 区域 bbox
-    wanderMin: { x: -5.7, z: -1.2 },
-    wanderMax: { x: -4.2, z: 0.3 },
+    wanderMin: { x: -5.2, z: -2.7 },
+    wanderMax: { x: 1.8, z: 4.3 },
     wanderSpeed: 1.1,
     investigateSpeed: 2.6,
     chaseSpeed: 3.3, // 比 N1 缝坏的账物更快半步
@@ -198,7 +199,7 @@ export const N2: NightDef = {
     noiseRadiusMax: 22,
     chaseNoiseLevel: 0.85,
     glb: './assets/entity-n2.glb',
-    start: { x: -5.0, z: -0.5 },
+    start: { x: -2.0, z: 3.05 },
   },
   noise: { crouch: 0.08, walk: 0.35, sprint: 1.0, pickup: 0.55, speak: 1.0 },
   whisper: { range: 20, interval: 8 },
@@ -208,7 +209,8 @@ export const N2: NightDef = {
   stamina: { max: 100, drainPerSec: 26, regenPerSec: 14, sprintMin: 20 },
   echoJitter: 2,
   fog: 0.55, // 开阔地形：CSS 雾层压远景（补偿 splt 无体积雾）
-  survivor: { enabled: true, x: -4.95, z: 0.05, glb: './assets/survivor.glb' }, // 槽位已规划（岔路口），玩法 E2 接入
+  // 幸存者槽位：岔路口（BFS 9m，nb=3），E2 遭遇玩法接入
+  survivor: { enabled: true, x: -3.45, z: 1.05, glb: './assets/survivor.glb' },
 };
 
 /** 全部已配置夜（进度页/解锁链按此渲染） */
