@@ -132,8 +132,9 @@ export interface NightDef {
   /** CSS 雾层强度 0..1（开阔地形补偿；0=无雾层，N1 保持原样） */
   fog: number;
   /** 雾层色调：plain=灰蓝（N2）/ snow=雪雾白偏冷（N3，带缓漂移）/ deepsea=水下青雾（N4）/
-   *  sand=沙尘暖雾（N5）/ dualband=冷热双色带（N6，半冷半暖渐变）；缺省 plain */
-  fogTint?: 'plain' | 'snow' | 'deepsea' | 'sand' | 'dualband';
+   *  sand=沙尘暖雾（N5）/ dualband=冷热双色带（N6，半冷半暖渐变）/ flora=花海暖调（N7 终幕）；
+   *  缺省 plain */
+  fogTint?: 'plain' | 'snow' | 'deepsea' | 'sand' | 'dualband' | 'flora';
   /** 账单卡上的夜型字样（N5=「匮乏夜」；缺省不显示，N1–N4 卡面零变化） */
   tagline?: string;
   /** 本夜伙计开场台词池（≥2 条，beginDive 随机抽一条；缺省=按伙计原型通用开场池） */
@@ -160,6 +161,10 @@ export interface NightDef {
     /** ignored 行李 / lost 半个油纸包（叙事物件，E 察看） */
     relic: { x: number; z: number };
   };
+  /** 终幕夜（N7，§7「全画像：终幕下潜=走过自己造的世界+告别」）：无实体追击（威胁槽换
+   *  漫步演出）、免账单（晨间收灯人半张脸收走账本）、结算替换为终幕结算
+   *  （告别陈词→三线判定→结局海报，farewell.ts/finale.ts）。缺省=普通夜零变化 */
+  finale?: boolean;
   /** 幸存者槽位（flag 先立着，玩法 E2 做） */
   survivor: SurvivorSlot;
 }
@@ -631,8 +636,83 @@ export const N6: NightDef = {
   survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
 };
 
+/** 第七夜「花海长廊」（终幕）——世界=world-n7（任务E9 预烘焙兜底，worldId 3FO4K4QHH3SJ，
+ * 307,222 高斯 / spz 5.1MB；live 生成位由 C5 livegen 探测接续，默认走烘焙）。
+ * nav 经 scripts/convert-nav-n7.mjs 带限锚定 E9 判定 PASS 的地面层 y∈[0.5,3.5]
+ * （globalFloor→2），剔除东半 y≈10–11 拱廊棚盖上层；主块 205 格沿 X 花海长廊。
+ * 选点=过程留痕/2026-10-27/E11-N7接入/plan-n7-points.mjs（plan-n6 同款体素墙判据+硬规则）：
+ * 出生=主块最西端 (-18.15,0.15) 带面 2.4 同带邻 3；告别亭=主块最东端死胡同凹口
+ * (-3.15,-1.35) 带面 1.6（E9「东端亮门=告别亭候选」落位，=归航门暖光柱复用），
+ * 出生↔告别亭 BFS 16.5m 可达 PASS——漫步路线=沿长廊向东走到亮门，E 告别（或天亮自动）。
+ * 机制槽（设计 §7 N7「全画像：终幕下潜=走过自己造的世界+告别」）：
+ *  - 无实体追击（告别夜，威胁槽换漫步演出；实体配置占位但全程不显形不更新）
+ *  - 免账单（bill=0）：晨间收灯人半张脸出场收走账本（screens.morning finale 分支，
+ *    DOM/CSS 剪影演出零新资产）
+ *  - 结算替换为终幕结算：告别陈词（farewell.ts 账本全程确定性拼装，引用第一夜/槽 #9）
+ *    → 三线判定（finale.ts：善=花海/亏=灰烬/乱=奇观，§2 七夜大潮）→ 结局海报
+ *    （bill-card 风格 CSS 三变体，槽 #27）+「再看一夜」回响预告（§7.5 P1，本体不做）
+ *  - 三线氛围变体在下潜开始即应用（世界从落进来的那一刻就是你的账本显形）：
+ *    #app.finale-good 原样 / .finale-debt 灰烬去饱和 / .finale-chaos 奇观色错位 */
+export const N7: NightDef = {
+  night: 7,
+  seedName: '花海长廊',
+  quest: {
+    title: '收灯人 · 今夜无账单',
+    body: '「七夜大潮，乱流今夜照着你的账本，把世界缝完了。<br/>没有账单——账本我收走了。往东走吧，长廊尽头有扇亮着的门。<br/>走过去，看看你缝出了什么。和你的伙计，好好道个别。」',
+    sign: '—— 收灯人（第一次露了半张脸）',
+  },
+  bill: 0, // 终幕免账单（叙事化：晨间收灯人收走账本）
+  diveSeconds: 300, // 漫步夜：5 分钟（长廊 16.5m，天亮=自动走到告别）
+  world: {
+    spz: './assets/world-n7.spz',
+    nav: './assets/world-n7.nav.json',
+    voxelMeta: './assets/collision-n7.voxel-meta.json',
+    voxelBin: './assets/collision-n7.voxel.bin',
+  },
+  // 门=告别亭：主块最东端死胡同凹口的亮门（归航门暖光柱视觉复用=「亮门」）
+  door: { x: -3.15, z: -1.35 },
+  doorReturnRadius: 2.2, // 亮门前庭稍宽（告别不需要卡位）
+  spawn: { x: -18.15, z: 0.15, yaw: -0.1 }, // 主块最西端；朝东偏南的告别亭 atan2(-1.5,15)≈-0.1
+  loot: [], // 终幕无信物：这一夜要捡的东西早就捡完了
+  pickupRadius: 1.6,
+  entity: {
+    // 占位配置：终幕夜实体不显形不更新（game.beginDive finale 分支跳过），数值无意义
+    name: '（无——告别夜）',
+    wanderMin: { x: -18, z: -1.5 },
+    wanderMax: { x: -3.5, z: 3 },
+    wanderSpeed: 1.1,
+    investigateSpeed: 2.6,
+    chaseSpeed: 3.1,
+    sightRange: 8,
+    flashlightRangeMul: 2,
+    loseSightSeconds: 4,
+    catchRadius: 0.95,
+    noiseRadiusMax: 22,
+    chaseNoiseLevel: 0.85,
+    glb: './assets/entity-n1.glb',
+    start: { x: -3.15, z: -1.35 },
+  },
+  noise: { crouch: 0.08, walk: 0.35, sprint: 1.0, pickup: 0.55, speak: 1.0 },
+  whisper: { range: 20, interval: 8 },
+  fearRange: 12,
+  dangerSeconds: 60,
+  speed: { walk: 2.2, sprint: 4.2, crouch: 1.05 },
+  stamina: { max: 100, drainPerSec: 26, regenPerSec: 14, sprintMin: 20 },
+  echoJitter: 0,
+  fog: 0.35, // 花海暖调（fogTint='flora'）：暖金偏粉的晨光雾层，浓度全夜最低（情感回报）
+  fogTint: 'flora',
+  // 花路灯 ×3（plan-n7-points BFS 20/50/80% 深度参考点，沿长廊南侧）：纯氛围零数值
+  warmLamps: [
+    { x: -16.15, z: -1.35 },
+    { x: -11.65, z: -1.35 },
+    { x: -6.65, z: -1.35 },
+  ],
+  finale: true, // 终幕夜总开关（夜流程分岔见 game.ts / farewell.ts / finale.ts）
+  survivor: { enabled: false, x: 0, z: 0, glb: './assets/survivor.glb' },
+};
+
 /** 全部已配置夜（进度页/解锁链按此渲染） */
-export const NIGHTS: NightDef[] = [N1, N2, N3, N4, N5, N6];
+export const NIGHTS: NightDef[] = [N1, N2, N3, N4, N5, N6, N7];
 /** 夜数中文序号（1→一） */
 export function nightCn(night: number): string {
   return '一二三四五六七八九'[night - 1] ?? String(night);

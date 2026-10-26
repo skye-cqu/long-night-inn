@@ -150,6 +150,7 @@ export class Hud {
     this.fogEl.classList.toggle('deepsea', def.fogTint === 'deepsea');
     this.fogEl.classList.toggle('sand', def.fogTint === 'sand');
     this.fogEl.classList.toggle('dualband', def.fogTint === 'dualband');
+    this.fogEl.classList.toggle('flora', def.fogTint === 'flora');
     this.applyFog();
     this.sanityEnabled = !!def.sanity;
     this.sanityRow.style.display = this.sanityEnabled ? '' : 'none';
@@ -211,6 +212,12 @@ export class Hud {
   setGoal(collected: number, total: number, value: number, bill: number) {
     this.goal.textContent = `账单 ${bill} 文 · 已捡 ${collected}/${total} · 身上 ${value} 文`;
     this.goal.classList.toggle('ok', value >= bill);
+  }
+
+  /** 目标框自定义文案（N7 终幕：无账单无信物，「沿长廊向东走」漫步目标） */
+  setGoalText(text: string) {
+    this.goal.textContent = text;
+    this.goal.classList.remove('ok');
   }
 
   /** 重建为本夜信物表并全灭：清掉 pushCodexSlot 追加的特殊所得槽（beginDive 每局调用，跨局不残留） */
