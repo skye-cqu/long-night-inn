@@ -304,19 +304,24 @@ export class Screens {
   }) {
     const CN = '壹贰叁肆伍陆柒捌玖';
     const scr = h('div', 'g-screen g-progress');
-    const rows = opts.nights
-      .map((def) => {
-        const paid = opts.paidNights.includes(def.night);
-        const unlocked = def.night <= opts.unlockedNight;
-        const cls = paid ? 'done' : unlocked ? 'dev' : 'lock';
-        const state = paid ? '已付一夜' : unlocked ? '已解锁 · 可下潜' : '待解锁';
-        const name = unlocked ? def.seedName : '未潜入';
-        return `<div class="g-night ${cls}"><span class="n-num">${CN[def.night - 1] ?? def.night}</span><span class="n-name">${name}</span><span class="n-state">${state}</span></div>`;
-      })
-      .join('');
+    // 七夜网格：已配置夜按解锁/付账渲染，未配置夜（N3+）置灰占位
+    const rows: string[] = [];
+    for (let i = 1; i <= 7; i++) {
+      const def = opts.nights.find((n) => n.night === i);
+      if (!def) {
+        rows.push(`<div class="g-night lock"><span class="n-num">${CN[i - 1] ?? i}</span><span class="n-name">未潜入</span><span class="n-state">待解锁</span></div>`);
+        continue;
+      }
+      const paid = opts.paidNights.includes(def.night);
+      const unlocked = def.night <= opts.unlockedNight;
+      const cls = paid ? 'done' : unlocked ? 'dev' : 'lock';
+      const state = paid ? '已付一夜' : unlocked ? '已解锁 · 可下潜' : '待解锁';
+      const name = unlocked ? def.seedName : '未潜入';
+      rows.push(`<div class="g-night ${cls}"><span class="n-num">${CN[def.night - 1] ?? def.night}</span><span class="n-name">${name}</span><span class="n-state">${state}</span></div>`);
+    }
     scr.innerHTML = `
       <h2>七夜 · 进度</h2>
-      <div class="g-nights">${rows}</div>
+      <div class="g-nights">${rows.join('')}</div>
       <div class="g-prog-note">七夜七张账单付清 = 通关。付不起 = 灯暗一分，不判死档。</div>
     `;
     const row = h('div', 'g-btn-row center');
