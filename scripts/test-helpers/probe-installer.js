@@ -162,5 +162,6 @@
   };
   P.__installed = true;
   P.about = { name: 'long-night-inn probe', version: 'E10-2026-10-26', clock: 'game-timeLeft 为分母' };
+  window.__probe = P; // 幂等安装：首轮 window.__probe 未定义时 P 是新建对象，必须回挂
   return { installed: true, about: P.about };
 })();
