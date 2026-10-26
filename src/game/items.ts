@@ -52,8 +52,10 @@ export class WorldItems {
   readonly doorPos: Vector3;
   private doorBaseY = 0;
   private scene: Scene3D;
+  /** 暖光点（N3 雪夜灯笼暖光，零新资产：发光小球+点光） */
+  private lampsRoot: Object3D | null = null;
 
-  constructor(scene: Scene3D, nav: NavField, defs: LootDef[], door: { x: number; z: number }) {
+  constructor(scene: Scene3D, nav: NavField, defs: LootDef[], door: { x: number; z: number }, lamps?: Array<{ x: number; z: number }>) {
     this.scene = scene;
     for (const def of defs) {
       const root = new Object3D();
@@ -115,13 +117,37 @@ export class WorldItems {
     this.doorRoot.add(doorLight as never);
     this.doorRoot.position.set(door.x, this.doorBaseY, door.z);
     scene.add(this.doorRoot as never);
-    scene.notifySceneChange?.();
+    this.scene.notifySceneChange?.();
+
+    // 暖光点（挂在一个 root 上，dispose 一并摘除）
+    if (lamps && lamps.length) {
+      this.lampsRoot = new Object3D();
+      for (const lamp of lamps) {
+        const y = nav.floorAt(lamp.x, lamp.z);
+        const bulb = new Mesh(
+          sphereGeometry(10, 8),
+          new MeshPhongMaterial({ color: 0xffb35c, shininess: 100 }),
+        );
+        bulb.scale.set(0.14, 0.18, 0.14);
+        bulb.position.set(lamp.x, y + 0.55, lamp.z);
+        const glow = new PointLight(0xffa050, 1.0, 5, 1.5);
+        glow.position.copy(bulb.position);
+        this.lampsRoot.add(bulb as never);
+        this.lampsRoot.add(glow as never);
+      }
+      scene.add(this.lampsRoot as never);
+      this.scene.notifySceneChange?.();
+    }
   }
 
   /** 换夜重建前：把本夜世界物从场景摘除 */
   dispose(scene: Scene3D) {
     for (const item of this.loot) scene.remove(item.root as never);
     scene.remove(this.doorRoot as never);
+    if (this.lampsRoot) {
+      scene.remove(this.lampsRoot as never);
+      this.lampsRoot = null;
+    }
     scene.notifySceneChange?.();
   }
 

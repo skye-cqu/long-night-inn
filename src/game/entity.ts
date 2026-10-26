@@ -117,7 +117,8 @@ export class Entity {
     this.pickWanderTarget();
   }
 
-  /** 换夜：更新参数/导航/碰撞并异步换 GLB 视觉（行为四态逻辑不动） */
+  /** 换夜：更新参数/导航/碰撞并异步换 GLB 视觉（行为四态逻辑不动）。
+   *  强化夜（N3 起）：cfg.darken 材质叠加压暗、cfg.eyeBoost 红眼增亮（视觉演出，行为只看数值配置） */
   applyNight(nav: NavField, collision: VoxelCollision | null, cfg: EntityDef, scene: Scene3D) {
     this.nav = nav;
     this.collision = collision;
@@ -127,6 +128,16 @@ export class Entity {
     this.pickWanderTarget();
     loadEntityGlb(cfg.glb)
       .then((model) => {
+        const darken = Math.min(0.8, Math.max(0, cfg.darken ?? 0));
+        if (darken > 0) {
+          const k = 1 - darken; // 材质叠加：颜色乘暗（不改几何/灯光；GLB 失败回退占位不压）
+          model.traverse((n) => {
+            const m = n as { isMesh?: boolean; material?: { color?: { multiplyScalar(v: number): void } } | Array<{ color?: { multiplyScalar(v: number): void } }> };
+            if (!m.isMesh || !m.material) return;
+            const mats = Array.isArray(m.material) ? m.material : [m.material];
+            for (const mat of mats) mat.color?.multiplyScalar(k);
+          });
+        }
         this.visual.remove(this.placeholder as never);
         this.visual.add(model as never);
         scene.notifySceneChange?.();
@@ -240,14 +251,15 @@ export class Entity {
       }
     }
 
-    // 贴地 + 视觉脉动（追击时更亮更快）
+    // 贴地 + 视觉脉动（追击时更亮更快；强化夜红眼更亮更大+点光更凶）
     this.pos.y = this.nav.floorAt(this.pos.x, this.pos.z) + ENTITY_HEIGHT * 0.5;
     const chasing = this.state === 'chase';
+    const eyeBoost = this.cfg.eyeBoost ?? 1;
     const pulse = chasing ? 0.12 : 0.05;
     const s = 1 + Math.sin(now * (chasing ? 9 : 3)) * pulse;
     this.visual.scale.set(s, chasing ? 1.05 : s, s);
-    this.light.intensity = chasing ? 1.8 : 0.9;
-    const eyeScale = chasing ? 1.5 : 1;
+    this.light.intensity = (chasing ? 1.8 : 0.9) * (1 + (eyeBoost - 1) * 0.6);
+    const eyeScale = (chasing ? 1.5 : 1) * eyeBoost;
     this.eyeL.scale.setScalar(eyeScale);
     this.eyeR.scale.setScalar(eyeScale);
 

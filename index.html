@@ -142,7 +142,23 @@
         radial-gradient(ellipse at center, rgba(150,160,178,0.10) 30%, rgba(140,150,170,0.42) 68%, rgba(120,132,152,0.8) 100%);
       mix-blend-mode: screen;
     }
+    /* 雪雾（N3：白偏冷，浓度低于 N2 灰蓝雾；缓漂移=落雪感） */
+    .g-fog.snow {
+      background:
+        linear-gradient(180deg, rgba(216,230,240,0.32) 0%, rgba(216,230,240,0) 26%),
+        radial-gradient(ellipse at center, rgba(220,232,242,0.10) 30%, rgba(206,222,234,0.34) 68%, rgba(190,208,224,0.62) 100%);
+      animation: snow-drift 26s ease-in-out infinite alternate;
+    }
+    @keyframes snow-drift {
+      from { transform: translate3d(0, 0, 0) scale(1.02); }
+      to { transform: translate3d(-1.4%, 0.7%, 0) scale(1.05); }
+    }
     .g-flash { position: fixed; inset: 0; z-index: 40; background: #000; opacity: 0; pointer-events: none; }
+    /* 红晕一瞬（N3 寻仇残影逼近） */
+    .g-redflash {
+      position: fixed; inset: 0; z-index: 41; opacity: 0; pointer-events: none;
+      background: radial-gradient(ellipse at center, rgba(150,12,12,0.16) 40%, rgba(160,0,0,0.5) 100%);
+    }
 
     /* ===== 2D 屏幕流 ===== */
     .g-screens { position: fixed; inset: 0; z-index: 30; }
@@ -218,6 +234,13 @@
     .g-quest-title { font-family: KaiTi, STKaiti, serif; font-size: 20px; margin-bottom: 8px; }
     .g-quest-body { color: var(--paper); }
     .g-quest-sign { color: var(--dim); text-align: right; }
+    /* N2 选择回响的晨间一行字（N3 起，「世界记得你」） */
+    .g-echo-line {
+      color: #9fc8e8; font-family: KaiTi, STKaiti, serif; font-size: 17px; letter-spacing: 3px;
+      padding: 8px 22px; border: 1px dashed rgba(159, 200, 232, 0.45); border-radius: 3px;
+      background: rgba(159, 200, 232, 0.06); animation: echo-in 1.6s ease-out;
+    }
+    @keyframes echo-in { 0% { opacity: 0; transform: translateY(-6px); } 100% { opacity: 1; transform: none; } }
     .g-ledger-empty { color: var(--dim); }
     .g-ledger-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
     .g-ledger-list li { display: flex; gap: 10px; padding: 3px 0; border-bottom: 1px dashed rgba(138,147,166,0.2); }
@@ -263,6 +286,7 @@
       border-radius: 6px; padding: 16px 22px;
     }
     .g-talk-bubble p { margin: 8px 0 0; font-family: KaiTi, STKaiti, serif; font-size: 19px; line-height: 2; }
+    .g-talk-echo { color: #9fc8e8 !important; font-size: 16px !important; border-top: 1px dashed rgba(159,200,232,0.35); padding-top: 8px; }
     .g-talk-arch { color: var(--gold); font-size: 13px; letter-spacing: 2px; }
 
     .g-nights { display: grid; grid-template-columns: repeat(4, 150px); gap: 12px; }

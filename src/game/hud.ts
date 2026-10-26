@@ -43,6 +43,7 @@ export class Hud {
   private fogLevel = 0;
   private app: HTMLElement;
   private bubbleTimer: number | null = null;
+  private redFlashEl: HTMLElement;
 
   constructor(uiRoot: HTMLElement, defs: LootDef[], appContainer: HTMLElement) {
     this.app = appContainer;
@@ -115,19 +116,21 @@ export class Hud {
     this.bubbleEl.append(this.bubbleArch, this.bubbleText);
     this.root.append(this.bubbleEl);
 
-    // 暗角 + 恐惧染色 + 黑屏闪（全屏层）+ 雾层（开阔夜补偿，opacity=setFog）
+    // 暗角 + 恐惧染色 + 黑屏闪（全屏层）+ 红晕闪（N3 残影）+ 雾层（开阔夜补偿，opacity=setFog）
     this.fogEl = el('div', 'g-fog');
     this.vignette = el('div', 'g-vig');
     this.fearTint = el('div', 'g-fear');
     this.flashEl = el('div', 'g-flash');
-    uiRoot.append(this.fogEl, this.vignette, this.fearTint, this.flashEl, this.root);
+    this.redFlashEl = el('div', 'g-redflash');
+    uiRoot.append(this.fogEl, this.vignette, this.fearTint, this.flashEl, this.redFlashEl, this.root);
   }
 
-  /** 换夜：夜标签 + 图鉴重建 + 雾强度（下潜 HUD 显示时生效） */
+  /** 换夜：夜标签 + 图鉴重建 + 雾强度与色调（下潜 HUD 显示时生效） */
   setNight(def: NightDef) {
     this.nightLabel.textContent = `第${nightCn(def.night)}夜 · ${def.seedName}`;
     this.buildCodex(def.loot);
     this.fogLevel = def.fog;
+    this.fogEl.classList.toggle('snow', def.fogTint === 'snow');
     this.applyFog();
   }
 
@@ -247,6 +250,16 @@ export class Hud {
     requestAnimationFrame(() => {
       this.flashEl.style.transition = `opacity ${fadeMs}ms`;
       this.flashEl.style.opacity = '0';
+    });
+  }
+
+  /** 红晕一瞬（N3 寻仇残影逼近：屏幕短暂红晕，~0.7s 渐隐） */
+  flashRed(fadeMs = 700) {
+    this.redFlashEl.style.transition = 'none';
+    this.redFlashEl.style.opacity = '1';
+    requestAnimationFrame(() => {
+      this.redFlashEl.style.transition = `opacity ${fadeMs}ms`;
+      this.redFlashEl.style.opacity = '0';
     });
   }
 }
