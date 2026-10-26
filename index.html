@@ -99,6 +99,9 @@
     .g-noise { background: linear-gradient(90deg, #6a8f6a, #d9b96a, #e06a5a); }
     .g-bar.hot { box-shadow: 0 0 8px rgba(224,106,90,0.8); }
     .g-stam { background: #6a93c9; }
+    /* 理智条（N4 黑暗理智）：青玉色，低值转暗红脉动 */
+    .g-san { background: linear-gradient(90deg, #4fb89e, #8fe0cc); }
+    .g-san.low { background: linear-gradient(90deg, #a04848, #d97a5a); animation: g-pulse 1.2s infinite; }
 
     .g-prompt {
       left: 50%; top: 58%; transform: translateX(-50%); z-index: 21;
@@ -152,6 +155,30 @@
     @keyframes snow-drift {
       from { transform: translate3d(0, 0, 0) scale(1.02); }
       to { transform: translate3d(-1.4%, 0.7%, 0) scale(1.05); }
+    }
+    /* 水下青雾（N4：冷青偏色，screen 叠加；缓漂移+微呼吸=在水里的光） */
+    .g-fog.deepsea {
+      background:
+        linear-gradient(180deg, rgba(96,168,160,0.30) 0%, rgba(96,168,160,0) 28%),
+        radial-gradient(ellipse at center, rgba(108,176,168,0.12) 28%, rgba(84,150,146,0.40) 66%, rgba(40,88,92,0.78) 100%);
+      animation: deepsea-drift 30s ease-in-out infinite alternate;
+    }
+    @keyframes deepsea-drift {
+      from { transform: translate3d(0, 0, 0) scale(1.02); filter: brightness(1); }
+      to { transform: translate3d(1.2%, -0.6%, 0) scale(1.06); filter: brightness(0.88); }
+    }
+    /* 黑暗理智低值水波纹暗角（N4）：层叠环形波纹+暗角，缓慢缩放呼吸（CSS 零新资产） */
+    .g-mad {
+      position: fixed; inset: 0; z-index: 17; pointer-events: none;
+      opacity: 0; transition: opacity 0.8s;
+      background:
+        repeating-radial-gradient(ellipse at center, rgba(0,0,0,0) 0 34px, rgba(24,52,54,0.16) 44px, rgba(0,0,0,0) 54px),
+        radial-gradient(ellipse at center, rgba(0,0,0,0) 34%, rgba(14,40,42,0.42) 72%, rgba(2,10,12,0.9) 100%);
+    }
+    .g-mad.on { opacity: 1; animation: mad-ripple 3.2s ease-in-out infinite; }
+    @keyframes mad-ripple {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.045); }
     }
     .g-flash { position: fixed; inset: 0; z-index: 40; background: #000; opacity: 0; pointer-events: none; }
     /* 红晕一瞬（N3 寻仇残影逼近） */
@@ -247,6 +274,20 @@
     .ll-type { color: var(--gold); min-width: 3em; }
     .ll-detail { color: var(--paper); }
 
+    /* N4 无住客时伙计的情报行（委托卡内，金色调） */
+    .g-keeper-intel { color: var(--gold); font-family: KaiTi, STKaiti, serif; font-size: 16px; margin: 10px 0 0; }
+    /* N4 住客卡（#26 常客系统首秀：他就是 N2 被救的人，住下了） */
+    .g-guest-card {
+      width: 520px; max-width: 92vw; padding: 14px 20px;
+      background: linear-gradient(165deg, rgba(143,212,138,0.05), rgba(255,255,255,0.02));
+      border: 1px solid rgba(143,212,138,0.45); border-left: 3px solid var(--green);
+      border-radius: 4px; animation: echo-in 1.6s ease-out;
+    }
+    .g-guest-name { color: var(--green); font-family: KaiTi, STKaiti, serif; font-size: 15px; letter-spacing: 4px; margin-bottom: 6px; }
+    .g-guest-intro { color: var(--dim); font-size: 13px; margin: 0 0 8px; }
+    .g-guest-line { color: var(--paper); font: 15px/1.9 KaiTi, STKaiti, serif; margin: 0 0 6px; }
+    .g-guest-intel { color: var(--gold); font-family: KaiTi, STKaiti, serif; font-size: 16px; margin: 0; }
+
     .g-seam { position: absolute; inset: 0; background: #05060a; overflow: hidden; }
     .g-seam canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     .g-seam-label {
@@ -288,6 +329,9 @@
     .g-talk-bubble p { margin: 8px 0 0; font-family: KaiTi, STKaiti, serif; font-size: 19px; line-height: 2; }
     .g-talk-echo { color: #9fc8e8 !important; font-size: 16px !important; border-top: 1px dashed rgba(159,200,232,0.35); padding-top: 8px; }
     .g-talk-arch { color: var(--gold); font-size: 13px; letter-spacing: 2px; }
+    /* N4 住客夜谈段（旅人 · 住客）：青玉色边 */
+    .g-talk-guest { border-color: rgba(143, 212, 138, 0.5); background: rgba(143, 212, 138, 0.06); }
+    .g-talk-guest .g-talk-arch { color: var(--green); }
 
     .g-nights { display: grid; grid-template-columns: repeat(4, 150px); gap: 12px; }
     .g-night {

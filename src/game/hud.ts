@@ -44,6 +44,11 @@ export class Hud {
   private app: HTMLElement;
   private bubbleTimer: number | null = null;
   private redFlashEl: HTMLElement;
+  /** 黑暗理智（N4）：理智条 + 水波纹暗角层（只有配置 sanity 的夜启用） */
+  private sanityRow: HTMLElement;
+  private sanityFill: HTMLElement;
+  private madEl: HTMLElement;
+  private sanityEnabled = false;
 
   constructor(uiRoot: HTMLElement, defs: LootDef[], appContainer: HTMLElement) {
     this.app = appContainer;
@@ -103,6 +108,15 @@ export class Hud {
     stamBar.append(this.staminaFill);
     stamRow.append(stamBar);
     meters.append(noiseRow, stamRow);
+    // 理智条（N4 黑暗理智）：默认隐藏，setNight 按 def.sanity 启用
+    this.sanityRow = el('div', 'g-meter-row g-sanity-row');
+    this.sanityRow.style.display = 'none';
+    this.sanityRow.append(el('span', 'g-meter-lab', '理智'));
+    const sanityBar = el('div', 'g-bar');
+    this.sanityFill = el('div', 'g-bar-fill g-san');
+    sanityBar.append(this.sanityFill);
+    this.sanityRow.append(sanityBar);
+    meters.append(this.sanityRow);
     this.root.append(meters);
 
     // 中心提示
@@ -122,16 +136,23 @@ export class Hud {
     this.fearTint = el('div', 'g-fear');
     this.flashEl = el('div', 'g-flash');
     this.redFlashEl = el('div', 'g-redflash');
-    uiRoot.append(this.fogEl, this.vignette, this.fearTint, this.flashEl, this.redFlashEl, this.root);
+    // 理智 <30 的水波纹暗角（N4 黑暗理智；CSS 动画零新资产）
+    this.madEl = el('div', 'g-mad');
+    uiRoot.append(this.fogEl, this.vignette, this.fearTint, this.madEl, this.flashEl, this.redFlashEl, this.root);
   }
 
-  /** 换夜：夜标签 + 图鉴重建 + 雾强度与色调（下潜 HUD 显示时生效） */
+  /** 换夜：夜标签 + 图鉴重建 + 雾强度与色调 + 理智条启用（下潜 HUD 显示时生效） */
   setNight(def: NightDef) {
     this.nightLabel.textContent = `第${nightCn(def.night)}夜 · ${def.seedName}`;
     this.buildCodex(def.loot);
     this.fogLevel = def.fog;
     this.fogEl.classList.toggle('snow', def.fogTint === 'snow');
+    this.fogEl.classList.toggle('deepsea', def.fogTint === 'deepsea');
     this.applyFog();
+    this.sanityEnabled = !!def.sanity;
+    this.sanityRow.style.display = this.sanityEnabled ? '' : 'none';
+    if (this.sanityEnabled) this.setSanity(100, true);
+    else this.madEl.classList.remove('on');
   }
 
   /** 按信物表重建图鉴格 */
@@ -169,6 +190,7 @@ export class Hud {
       this.setVignette('off');
       this.setFear(0);
       this.setPrompt(null);
+      this.madEl.classList.remove('on');
     }
   }
 
@@ -215,6 +237,15 @@ export class Hud {
 
   setStamina(v: number) {
     this.staminaFill.style.width = `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`;
+  }
+
+  /** 黑暗理智（N4）：理智条 0..100 + 低理智水波纹暗角（仅 sanity 启用夜生效） */
+  setSanity(v: number, enabled: boolean, lowThreshold = 30) {
+    if (!enabled) return;
+    const c = Math.min(100, Math.max(0, v));
+    this.sanityFill.style.width = `${Math.round(c)}%`;
+    this.sanityFill.classList.toggle('low', c < lowThreshold);
+    this.madEl.classList.toggle('on', c < lowThreshold);
   }
 
   /** 伙计说话气泡（自动消失） */

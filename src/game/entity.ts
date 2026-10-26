@@ -66,6 +66,8 @@ export class Entity {
   state: EntityState = 'wander';
   /** 抓捕冷却（抓住后回深处消化，教学夜的宽限） */
   calmUntil = 0;
+  /** 盲追截止时刻（N4 黑暗理智归零惩罚：无视视线/距离直扑玩家） */
+  enrageUntil = 0;
 
   private nav: NavField;
   private collision: VoxelCollision | null;
@@ -174,6 +176,15 @@ export class Entity {
     this.calmUntil = 0;
   }
 
+  /** 盲追（N4 黑暗理智归零惩罚）：seconds 秒内无视视线/距离/饱食冷却直扑玩家。
+   *  「永久侦测」的实现=强制 chase 且不丢目标；追到/超时后回归常态行为。 */
+  enrage(seconds: number, now: number) {
+    this.enrageUntil = now + seconds;
+    this.calmUntil = 0;
+    this.noLosT = 0;
+    if (this.state !== 'chase') this.state = 'chase';
+  }
+
   teleport(x: number, z: number) {
     this.pos.set(x, this.nav.floorAt(x, z) + ENTITY_HEIGHT * 0.5, z);
   }
@@ -187,6 +198,7 @@ export class Entity {
       moved: +this.movedAcc.toFixed(3),
       tAcc: +this.tAcc.toFixed(1),
       calmUntil: +this.calmUntil.toFixed(1),
+      enrageLeft: +Math.max(0, this.enrageUntil - this.tAcc).toFixed(1),
     };
   }
 
@@ -199,11 +211,15 @@ export class Entity {
     const dz = playerPos.z - this.pos.z;
     const dist = Math.hypot(dx, dz);
     const hasLOS = this.checkLOS(playerPos);
+    const enraged = now < this.enrageUntil; // N4 黑暗理智归零：永久侦测窗口
 
-    // 追击条件：视线 + 距离（手电 ×2 侦测范围）
+    // 追击条件：视线 + 距离（手电 ×侦测倍率）；盲追窗口无视视线/距离
     const sight = this.cfg.sightRange * (flashlightOn ? this.cfg.flashlightRangeMul : 1);
     if (now >= this.calmUntil) {
-      if (hasLOS && dist < sight && this.state !== 'chase') {
+      if (enraged && this.state !== 'chase') {
+        this.state = 'chase';
+        this.noLosT = 0;
+      } else if (hasLOS && dist < sight && this.state !== 'chase') {
         this.state = 'chase';
         this.noLosT = 0;
       }
@@ -230,15 +246,15 @@ export class Entity {
         this.lingerT -= dt;
         this.root.rotation.y += dt * 2.4; // 原地扫视
         if (this.lingerT <= 0) {
-          this.state = 'wander';
-          this.pickWanderTarget();
+          this.state = enraged ? 'chase' : 'wander';
+          if (!enraged) this.pickWanderTarget();
         }
         break;
       }
       case 'chase': {
         speed = this.cfg.chaseSpeed;
         this.moveTo(playerPos.x, playerPos.z, dt, speed);
-        if (hasLOS) {
+        if (hasLOS || enraged) {
           this.noLosT = 0;
           this.lastSeen = { x: playerPos.x, z: playerPos.z };
         } else {
@@ -252,7 +268,8 @@ export class Entity {
           caught = true;
           this.state = 'wander';
           this.pickWanderTarget();
-          this.calmUntil = now + 7; // 抓住后回深处消化 7s
+          this.calmUntil = now + 7; // 抓住后回深处消化 7s（盲追窗口被抓则惩罚已兑现，不续）
+          this.enrageUntil = 0;
         }
         break;
       }
@@ -265,7 +282,8 @@ export class Entity {
     const pulse = chasing ? 0.12 : 0.05;
     const s = 1 + Math.sin(now * (chasing ? 9 : 3)) * pulse;
     this.visual.scale.set(s, chasing ? 1.05 : s, s);
-    this.light.intensity = (chasing ? 1.8 : 0.9) * (1 + (eyeBoost - 1) * 0.6);
+    // 盲追窗口（N4 理智归零）：红眼与点光再抬一档（演出，行为数值在 cfg）
+    this.light.intensity = (chasing ? 1.8 : 0.9) * (1 + (eyeBoost - 1) * 0.6) * (now < this.enrageUntil ? 1.35 : 1);
     const eyeScale = (chasing ? 1.5 : 1) * eyeBoost;
     this.eyeL.scale.setScalar(eyeScale);
     this.eyeR.scale.setScalar(eyeScale);

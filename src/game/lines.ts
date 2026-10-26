@@ -82,6 +82,16 @@ export const WRAITH_LINES = [
 /** 寻仇残影散去时的一行字（绕开即消失） */
 export const WRAITH_GONE_LINE = '残影散了。它没讨到账——这一夜先记着。';
 
+/** N4 黑暗理智：理智 <30 伙计慌台词池（低理智时低频抽用；≥3 条） */
+export const SANITY_LOW_LINES = [
+  '太黑了……我灯芯上的火苗都在往回缩！开灯，或者快到灯底下去！',
+  '你的眼睛开始骗你了，我的也是……别停在黑地方，找灯笼！',
+  '我听见你自己的心跳了……这可不是好事。灯！找灯！',
+];
+
+/** N4 黑暗理智归零的一行字（实体开始盲追的宣告） */
+export const SANITY_ZERO_LINE = '你的呼吸声在黑暗里传得很远。';
+
 /** 抽一条（不连续重复由调用方低频触发保证；池小随机即可） */
 export function pickEnhancedChase(): string {
   return N3_CHASE_LINES[Math.floor(Math.random() * N3_CHASE_LINES.length)] ?? N3_CHASE_LINES[0]!;
@@ -89,6 +99,11 @@ export function pickEnhancedChase(): string {
 
 export function pickWraithLine(): string {
   return WRAITH_LINES[Math.floor(Math.random() * WRAITH_LINES.length)] ?? WRAITH_LINES[0]!;
+}
+
+/** N4 低理智伙计慌台词（池内随机） */
+export function pickSanityLowLine(): string {
+  return SANITY_LOW_LINES[Math.floor(Math.random() * SANITY_LOW_LINES.length)] ?? SANITY_LOW_LINES[0]!;
 }
 
 /** 夜谈抽一条（不连续重复的简化版：幸存者四型各 ≥2 条） */
