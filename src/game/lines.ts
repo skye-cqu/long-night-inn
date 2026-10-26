@@ -64,6 +64,33 @@ export const SURVIVOR_PLEAS = [
   '他们说驿站收留迷路的人。我摸到门口的光就跟着来了……带我回去吧，我有谢礼。',
 ];
 
+/** N3 强化实体首次追击台词池（enhanced 实体首进 chase 时说一条，替换当次恐惧台词；≥3 条） */
+export const N3_CHASE_LINES = [
+  '它记住你了——上一夜的事它全知道！别走直线，拐弯！',
+  '这不是昨晚那东西了。它吃过一回，现在是冲你来的——跑！',
+  '雪地上没脚印它也跟得上……它比昨晚快得多，别回头！',
+  '灯芯发黑……它在账上见过你。往塌拱后面绕，快！',
+];
+
+/** N3 寻仇残影（robbed 回响）逼近时伙计紧张台词池（≥2 条） */
+export const WRAITH_LINES = [
+  '别看它别看它——绕开走！它不抢命，它只讨你抢来的那笔账！',
+  '那是昨晚那笔账长出来的影子！它没有手，拿不走东西——往灯多的地方走！',
+  '它在盯你的口袋……抢来的东西烫手，快绕开，别让它跟上一路！',
+];
+
+/** 寻仇残影散去时的一行字（绕开即消失） */
+export const WRAITH_GONE_LINE = '残影散了。它没讨到账——这一夜先记着。';
+
+/** 抽一条（不连续重复由调用方低频触发保证；池小随机即可） */
+export function pickEnhancedChase(): string {
+  return N3_CHASE_LINES[Math.floor(Math.random() * N3_CHASE_LINES.length)] ?? N3_CHASE_LINES[0]!;
+}
+
+export function pickWraithLine(): string {
+  return WRAITH_LINES[Math.floor(Math.random() * WRAITH_LINES.length)] ?? WRAITH_LINES[0]!;
+}
+
 /** 夜谈抽一条（不连续重复的简化版：幸存者四型各 ≥2 条） */
 function pickFrom(pool: string[]): string {
   return pool[Math.floor(Math.random() * pool.length)] ?? pool[0] ?? '……';

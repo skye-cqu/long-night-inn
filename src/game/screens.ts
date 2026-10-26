@@ -124,14 +124,15 @@ export class Screens {
     setTimeout(() => nameInput.focus(), 50);
   }
 
-  // ---- 驿站晨间（hub，按夜配置渲染委托文案） ----
-  morning(records: LedgerRecord[], def: NightDef, onDive: () => void) {
+  // ---- 驿站晨间（hub，按夜配置渲染委托文案；echoMorning=N2 选择回响的一行字，N3 起） ----
+  morning(records: LedgerRecord[], def: NightDef, onDive: () => void, echoMorning?: string) {
     const scr = h('div', 'g-screen g-morning');
     scr.innerHTML = `
       <div class="g-hub-head">
         <h2>驿站 · 第${nightCn(def.night)}夜之晨</h2>
         <span class="g-hub-sub">今夜世界：${def.seedName}。灯还亮着，乱流在门外重新缝世界。</span>
       </div>
+      ${echoMorning ? `<div class="g-echo-line">${echoMorning}</div>` : ''}
       <div class="g-hub-cols">
         <div class="g-quest">
           <div class="g-quest-tag">今晨委托</div>
@@ -273,14 +274,14 @@ export class Screens {
   }
 
   // ---- 夜谈 ----
-  talk(archetype: string, comment: string, onContinue: () => void) {
+  talk(archetype: string, comment: string, onContinue: () => void, echoComment?: string) {
     const scr = h('div', 'g-screen g-talk');
     scr.innerHTML = `
       <h2>夜谈 · 灯下</h2>
       <div class="g-talk-scene">驿站的灯重新亮起。伙计——灯芯上那缕小火苗——跳回灯座，看了你一会儿。</div>
     `;
     const bubble = h('div', 'g-talk-bubble');
-    bubble.innerHTML = `<span class="g-talk-arch">伙计 · ${archetype}</span><p>${comment}</p>`;
+    bubble.innerHTML = `<span class="g-talk-arch">伙计 · ${archetype}</span><p>${comment}</p>${echoComment ? `<p class="g-talk-echo">${echoComment}</p>` : ''}`;
     scr.append(bubble);
     const row = h('div', 'g-btn-row center');
     const next = h('button', 'g-btn primary', '看今夜进度 →');

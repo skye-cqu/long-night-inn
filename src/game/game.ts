@@ -8,11 +8,12 @@
  */
 import { NIGHTS, type Archetype, type NightDef } from './config';
 import { Ledger, loadUnlockedNight, saveUnlockedNight, type LedgerEventType } from './ledger';
-import { ARCHETYPE_LINES, LineBag, pickPlea } from './lines';
+import { ARCHETYPE_LINES, LineBag, pickPlea, pickEnhancedChase, pickWraithLine, WRAITH_GONE_LINE } from './lines';
 import { Sfx } from './audio';
 import { WorldItems, type LootItem } from './items';
 import { Entity } from './entity';
 import { Survivor } from './survivor';
+import { Echo, readEchoKind, ECHO_MORNING, ECHO_RELIC_TEXT, pickEchoTalk, type EchoKind } from './echo';
 import { Hud } from './hud';
 import { Screens, type SurvivorChoice } from './screens';
 import type { WalkControls, PlayerState } from '../walk-controls';
@@ -27,6 +28,10 @@ export type Stage = 'boot' | 'title' | 'morning' | 'seam' | 'dive' | 'settle' | 
 const SURVIVOR_BONUS = 5;
 /** 抢夺所得「旅人的油纸包」（图鉴第 4 格） */
 const PAPER_VALUE = 10;
+/** N3 saved 回响「谢礼灯笼」（图鉴追加槽，仅此夜） */
+const GIFT_VALUE = 5;
+/** 谢礼灯笼视觉源：复用 Lux3D 铜灯笼 GLB（零新资产） */
+const GIFT_GLB = './assets/token-lantern.glb';
 
 /** 当前世界运行时句柄（main.ts 持有并在换夜时原地更新字段） */
 export interface WorldHandle {
@@ -67,6 +72,12 @@ export class Game {
   private survivor: Survivor | null = null;
   private survivorOutcome: '' | '救下旅人' | '无视求助' | '抢夺旅人' | '旅人失踪' = '';
   private survivorBonus = 0;
+  /** N2 选择回响（N3 起）：结局集 + 晨间一行字 + 世界内显形（beginDive 重建） */
+  private echo: Echo | null = null;
+  private echoKind: EchoKind | null = null;
+  private echoMorning: string | null = null;
+  /** 强化实体首次追击台词（每局一次） */
+  private enhancedChaseShown = false;
   private hud: Hud;
   private screens: Screens;
   private archetype: Archetype = '毒舌';
@@ -144,7 +155,7 @@ export class Game {
         this.stage = 'morning';
         this.hud.show(false);
         this.deps.hint.style.opacity = '0';
-        this.screens.morning(this.ledger.all(), this.def, () => this.goto('seam'));
+        this.screens.morning(this.ledger.all(), this.def, () => this.goto('seam'), this.echoMorning ?? undefined);
         break;
       case 'seam': {
         this.stage = 'seam';
@@ -217,11 +228,18 @@ export class Game {
     this.nightRunCount = 0; // 抖动按「本夜第几次潜」计：换夜（含 enterNight 重进）清零
     const def = this.def;
     if (this.items) this.items.dispose(this.deps.scene);
-    this.items = new WorldItems(this.deps.scene, this.deps.world.nav, def.loot, def.door);
+    this.items = new WorldItems(this.deps.scene, this.deps.world.nav, def.loot, def.door, def.warmLamps);
     this.items.reset();
     this.items.loot.forEach((i) => (i.root.visible = false)); // 非下潜阶段藏起世界物
     this.entity.applyNight(this.deps.world.nav, this.deps.world.collision, def.entity, this.deps.scene);
     this.entity.root.visible = false;
+    // N2 选择回响：读账本定结局集（世界物在 beginDive 世界就绪后显形——nav 须为本夜的）
+    if (this.echo) {
+      this.echo.dispose();
+      this.echo = null;
+    }
+    this.echoKind = def.echoAnchors ? readEchoKind(this.ledger) : null;
+    this.echoMorning = this.echoKind ? ECHO_MORNING[this.echoKind] : null;
     this.hud.setNight(def);
     this.ensureWorld(def); // 晨间屏幕期间后台预取
   }
@@ -260,6 +278,7 @@ export class Game {
     this.ftue.diveStartAt = performance.now();
     this.ambientNext = 12;
     this.whisperNext = 8;
+    this.enhancedChaseShown = false;
 
     // 回响重玩：战利品价值微变（±echoJitter 文）——只看「本夜第几次潜」，换夜首潜不抖
     this.items.reset(this.nightRunCount > 0 ? def.echoJitter : 0);
@@ -285,6 +304,13 @@ export class Game {
       this.survivor.place(def.survivor.x, def.survivor.z);
     } else if (this.survivor) {
       this.survivor.root.visible = false;
+    }
+
+    // N2 选择回响显形（N3）：世界已就绪（守卫通过，nav=本夜），按账本结局集重建世界物
+    if (def.echoAnchors && this.echoKind) {
+      if (this.echo) this.echo.dispose();
+      this.echo = new Echo(this.deps.scene, this.deps.world.nav, def.echoAnchors);
+      this.echo.spawn(this.echoKind, GIFT_GLB);
     }
 
     const { spawn } = def;
@@ -319,6 +345,11 @@ export class Game {
     this.sfx.stopHeartbeat();
     this.hud.show(false);
     this.deps.hint.style.opacity = '0';
+    // 回响世界物随本局收摊（结局集与晨间字保留到夜谈/进度）
+    if (this.echo) {
+      this.echo.dispose();
+      this.echo = null;
+    }
 
     const lostValue = lostAll ? this.held.reduce((s, i) => s + i.value, 0) : 0;
     if (lostAll) this.held = [];
@@ -384,11 +415,16 @@ export class Game {
   }
 
   private openTalk() {
-    // 夜谈：伙计评论本夜（本次下潜）第一条账本记录
+    // 夜谈：伙计评论本夜（本次下潜）第一条账本记录；N3 起追加 N2 选择回响的评语（世界记得你）
     const runRecords = this.ledger.all().filter((r) => r.ts >= this.runStartTs && r.night === this.def.night);
     const first = runRecords[0];
     const type: LedgerEventType = first ? first.type : 'return';
-    this.screens.talk(this.archetype, this.bag.talk(type as never), () => this.goto('progress'));
+    this.screens.talk(
+      this.archetype,
+      this.bag.talk(type as never),
+      () => this.goto('progress'),
+      this.echoKind ? pickEchoTalk(this.echoKind) : undefined,
+    );
   }
 
   // ---- 主循环 tick（main 每帧调用） ----
@@ -449,8 +485,16 @@ export class Game {
       this.hud.bubble(this.bag.scene('fear'), this.archetype, 5000);
     }
 
-    // 追击逼近计数（账单卡「遭遇」）
-    if (tick.state === 'chase' && !this.wasChasing && dist < 9) this.nearMiss++;
+    // 追击逼近计数（账单卡「遭遇」）；强化实体首进追击 → 伙计强化版台词（替换当刻恐惧话）
+    if (tick.state === 'chase' && !this.wasChasing) {
+      if (dist < 9) this.nearMiss++;
+      if (def.entity.enhanced && !this.enhancedChaseShown) {
+        this.enhancedChaseShown = true;
+        this.fearLineT = t;
+        this.sfx.fearPing();
+        this.hud.bubble(pickEnhancedChase(), this.archetype, 5200);
+      }
+    }
     this.wasChasing = tick.state === 'chase';
 
     // 低语雷达：实体 <whisper.range 每 whisper.interval 秒方位提示
@@ -486,11 +530,27 @@ export class Game {
       }
     }
 
+    // N2 选择回响（N3）：残影逼近=紧张台词+红晕；绕开=散去（edge 各一次）
+    if (this.echo) {
+      const et = this.echo.update(dt, t, ps.position);
+      if (et.wraithNear) {
+        this.sfx.whisper();
+        this.hud.flashRed();
+        this.hud.bubble(pickWraithLine(), this.archetype, 5000);
+      }
+      if (et.wraithGone) {
+        this.hud.bubble(WRAITH_GONE_LINE, this.archetype, 4500);
+      }
+    }
+
     // 交互提示
     const near = this.items.nearest(ps.position);
+    const echoNear = this.echo?.nearInteractable(ps.position) ?? null;
     const doorD = Math.hypot(ps.position.x - def.door.x, ps.position.z - def.door.z);
     if (near && near.dist < def.pickupRadius) {
       this.hud.setPrompt(`按 E 拾取 · ${near.item.def.name}（${near.item.value} 文）`);
+    } else if (echoNear && echoNear.dist < (echoNear.kind === 'gift' ? def.pickupRadius : 2.0)) {
+      this.hud.setPrompt(echoNear.kind === 'gift' ? '按 E 收下 · 谢礼灯笼（+5 文）' : '按 E 察看');
     } else if (doorD < def.doorReturnRadius) {
       const canReturn = this.held.length > 0 || this.caughtCount > 0 || this.timeLeft < 30;
       this.hud.setPrompt(canReturn ? '按 E 推门归航' : '门在这里。天亮前带着值钱物回来。');
@@ -626,6 +686,59 @@ export class Game {
     };
   }
 
+  // ---- N2 选择回响（N3）----
+
+  /** E 交互回响物：谢礼灯笼拾取（+5 文）/ 叙事物件察看（一句描述）。未命中返回 false */
+  private tryEcho(): boolean {
+    const echo = this.echo;
+    if (!echo || !this.echoKind) return false;
+    const ps = this.deps.controls.playerState;
+    if (echo.isGiftInRange(ps.position, this.def.pickupRadius)) {
+      echo.takeGift();
+      this.held.push(this.makeGiftItem());
+      this.sfx.pickup();
+      this.hud.pushCodexSlot('gift', 'lantern', '谢礼灯笼', GIFT_VALUE);
+      this.hud.setCodex(this.held.map((i) => i.def.id));
+      this.hud.setGoal(this.heldCount(), this.items.loot.length + this.specialHeldCount(), this.heldValue(), this.def.bill);
+      this.ledger.add(this.def.night, 'loot', { id: 'gift', name: '谢礼灯笼', value: GIFT_VALUE, deep: false, echo: 'saved' });
+      this.hud.bubble('灯笼收下了。灯芯暖了一分——他托乱流说，谢谢你那天没走开。', this.archetype, 5200);
+      return true;
+    }
+    if ((echo.kind === 'ignored' || echo.kind === 'lost') && echo.isRelicInRange(ps.position, 2.0)) {
+      echo.markRelicSeen();
+      this.sfx.whisper();
+      this.hud.bubble(ECHO_RELIC_TEXT[echo.kind], this.archetype, 6200);
+      return true;
+    }
+    return false;
+  }
+
+  /** 谢礼灯笼：不落地的特殊所得（同油纸包模式） */
+  private makeGiftItem(): LootItem {
+    return {
+      def: {
+        id: 'gift',
+        name: '谢礼灯笼',
+        value: GIFT_VALUE,
+        x: 0,
+        z: 0,
+        color: 0xffb35c,
+        glowColor: 0xffd9a0,
+        shape: 'lantern',
+      },
+      root: null as unknown as Object3D,
+      pos: null as unknown as Vector3,
+      baseY: 0,
+      taken: false,
+      value: GIFT_VALUE,
+    };
+  }
+
+  /** held 里的特殊所得数（油纸包/谢礼灯笼——图鉴目标总数用） */
+  private specialHeldCount(): number {
+    return this.held.filter((i) => i.def.id === 'paper' || i.def.id === 'gift').length;
+  }
+
   private toggleFlashlight() {
     this.flashlight = !this.flashlight;
     this.sfx.flash();
@@ -653,7 +766,7 @@ export class Game {
     }
     if (this.screens.talkboxOpen) return; // 输入框自己的 keydown 处理
     if (e.code === 'KeyE') {
-      if (!this.tryPickup() && !this.trySurvivorTalk()) this.tryReturn();
+      if (!this.tryPickup() && !this.trySurvivorTalk() && !this.tryEcho()) this.tryReturn();
     } else if (e.code === 'KeyF') {
       this.toggleFlashlight();
     } else if (e.code === 'KeyT') {
@@ -761,6 +874,7 @@ export class Game {
       survivor: this.survivor?.debug ?? null,
       survivorOutcome: this.survivorOutcome,
       survivorBonus: this.survivorBonus,
+      echo: this.echo?.debug ?? { kind: this.echoKind, morning: this.echoMorning },
       ftue: this.ftue,
       sfx: this.sfx.enabled,
     };
@@ -805,6 +919,8 @@ export class Game {
       },
       /** 遭遇调试：开对话卡（不出 E 也能触发） */
       survivorDialog: () => this.trySurvivorTalk(),
+      /** 回响调试（N3）：E 交互回响物（拾谢礼灯笼/察看叙事物件）；状态见 __game.night.echo */
+      echoInteract: () => this.tryEcho(),
       /** 取证：隐藏/显示战利品与门（像素差对照用） */
       showItems: (v: boolean) => {
         this.items.loot.forEach((i) => (i.root.visible = v && !i.taken));
