@@ -196,7 +196,16 @@ export class WalkControls {
   private groundYFiltered: number | null = null;
 
   private stepVoxel(dt: number, targetX: number, targetZ: number) {
-    const rawGroundY = this.probeGround();
+    let rawGroundY = this.probeGround();
+    // 防坠网（E2 起）：N2 清洗后点云残留地面裂缝/孔洞列——probe 会穿透薄板打到深层
+    // 杂面或探空直坠。nav 高度场（带内选面，与玩家目视地面一致）离脚底 2.5m 内时
+    // 信任 nav：取 probe/nav 较高面为地面——裂缝上方照常行走，真高台跌落（高差
+    // >2.5m）不受影响。N1 可走面 probe 与 nav 一致，此分支不改变结果——N1 零变化。
+    const navY = this.nav.floorAt(this.position.x, this.position.z);
+    const feet = this.position.y - EYE_HEIGHT;
+    if (Number.isFinite(navY) && Math.abs(navY - feet) < 2.5) {
+      rawGroundY = rawGroundY === null ? navY : Math.max(rawGroundY, navY);
+    }
     if (rawGroundY !== null) {
       if (this.groundYFiltered === null) this.groundYFiltered = rawGroundY;
       else this.groundYFiltered += (rawGroundY - this.groundYFiltered) * (1 - Math.exp(-20 * dt));
