@@ -26,6 +26,8 @@ function copyViewerDist(): Plugin {
 }
 
 export default defineConfig({
+  // 相对基座：GitHub Pages 子路径（/repo/）与任意静态托管目录均可直接跑（资产 URL 均为 ./ 相对）
+  base: './',
   optimizeDeps: {
     exclude: ['@manycore/aholo-viewer'],
   },

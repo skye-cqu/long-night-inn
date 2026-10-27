@@ -9,7 +9,7 @@
   <!-- 生产构建用：viewer 保持 external，由该 importmap 指向随 dist 复制的
        /vendor/aholo-viewer/（worker 相对路径依赖同目录文件）。dev 下此表不生效。 -->
   <script type="importmap">
-    { "imports": { "@manycore/aholo-viewer": "/vendor/aholo-viewer/index.js" } }
+    { "imports": { "@manycore/aholo-viewer": "./vendor/aholo-viewer/index.js" } }
   </script>
   <style>
     :root {
