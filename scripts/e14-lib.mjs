@@ -6,10 +6,12 @@
  *
  * 内容：
  * - launchBrowser()：playwright-core + channel:'chrome'，四枚反后台化 flag（见 LAUNCH_ARGS）
- * - injectProbe(page)：把 scripts/test-helpers/probe-installer.js 全文经
+ * - injectProbe(page)：scripts/test-helpers/probe-installer.js 全文经
  *   page.evaluate(new Function(src)) 注入（线上无 /scripts/ 路径，dev-only fetch 不可用）
- * - attachDiagnostics(page)：console/pageerror/4xx 响应收集；GL 警告按 B4 已知噪音过滤
- * - waitStage / step 计时与 N1 门位等测试常量（门位来自 src/game/config.ts N1，注释在案）
+ * - installWalker(page)：精走器（页面侧 90ms 步进穿拾，见 WALKER_SRC 注）
+ * - loadVoxelGraph(night)：体素路径规划器（Node 侧，plan-n*-points 同族口径）
+ * - attachDiagnostics/finalErrors：console/pageerror/4xx/崩溃收集 + 已知噪音剔除
+ * - waitStage / rafProbe / playTitleToDive 等 UI 流程件
  */
 import { chromium } from 'playwright-core';
 import { readFileSync, appendFileSync } from 'node:fs';
@@ -81,6 +83,145 @@ export function installWalker(page) {
   return page.evaluate(new Function(WALKER_SRC));
 }
 
+/**
+ * 体素路径规划器（Node 侧，离线读 public/assets 的 nav.json + 体素 bin——与玩家碰撞
+ * 同一份数据）。口径照抄工程选点脚本 plan-n3-points.mjs 起的定版模型（开发者用它保证
+ * 七夜信物可达，实测七夜 出生→每信物→门 全可达）：
+ *   地面 = 该夜 world-nN.nav.json 的 floorGridPos（带限锚定高度场）；
+ *   墙   = 地面+0.2..1.6m 内连续实心 ≥0.5m（薄植被可穿，与玩家胶囊一致）；
+ *   连通 = 4 邻接可走格 BFS（不做 Δfloor 门——微型地形由胶囊/自动踏步自理，图管粗拓扑）；
+ *   路径 → 贪心折线平滑（连线沿途 0.25m 采样均在可走格）。
+ * 教训备案：①nav 高度场直接做 Δy 门控的图会碎成单格（N2 实测连通块=1）；②底向上首
+ * 实心 colTop（plan-n2 旧口径）在 N3+/多层场景会把兴趣点判成不可达——必须按 nav 带面。
+ */
+const voxelGraphs = new Map();
+export function loadVoxelGraph(night) {
+  if (voxelGraphs.has(night)) return voxelGraphs.get(night);
+  const suffix = night === 1 ? '' : `-n${night}`;
+  const dir = join(HERE, '..', 'public', 'assets');
+  const meta = JSON.parse(readFileSync(join(dir, `collision${suffix}.voxel-meta.json`), 'utf8'));
+  const bin = readFileSync(join(dir, `collision${suffix}.voxel.bin`));
+  const nav = JSON.parse(readFileSync(join(dir, `world-n${night}.nav.json`), 'utf8'));
+  const allU32 = new Uint32Array(bin.buffer.slice(bin.byteOffset, bin.byteOffset + Math.floor(bin.byteLength / 4) * 4));
+  const nodes = allU32.slice(0, meta.nodeCount >>> 0);
+  const leafData = allU32.slice(meta.nodeCount >>> 0, (meta.nodeCount >>> 0) + (meta.leafDataCount >>> 0));
+  const gMin = meta.gridBounds.min, gMax = meta.gridBounds.max, vs = meta.voxelResolution;
+  const CX = Math.round((gMax[0] - gMin[0]) / vs);
+  const CY = Math.round((gMax[1] - gMin[1]) / vs);
+  const CZ = Math.round((gMax[2] - gMin[2]) / vs);
+  const SOLID = 0xff000000 >>> 0;
+  const popcount = (n) => { n >>>= 0; n -= (n >>> 1) & 0x5555555; n = (n & 0x33333333) + ((n >>> 2) & 0x33333333); return (((n + (n >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; };
+  const leaf = (n, ix, iy, iz) => {
+    const idx = n & 0xffffff, bit = (iz & 3) * 16 + (iy & 3) * 4 + (ix & 3);
+    const lo = leafData[idx * 2] >>> 0;
+    if (bit < 32) return ((lo >>> bit) & 1) === 1;
+    return (((leafData[idx * 2 + 1] >>> 0) >>> (bit - 32)) & 1) === 1;
+  };
+  const solid = (ix, iy, iz) => {
+    if (ix < 0 || iy < 0 || iz < 0 || ix >= CX || iy >= CY || iz >= CZ) return false;
+    const bx = (ix / 4) | 0, by = (iy / 4) | 0, bz = (iz / 4) | 0;
+    let node = 0;
+    for (let level = meta.treeDepth - 1; level >= 0; level--) {
+      const n = nodes[node] >>> 0;
+      if (n === SOLID) return true;
+      const mask = (n >>> 24) & 0xff;
+      if (mask === 0) return leaf(n, ix, iy, iz);
+      const oct = (((bz >>> level) & 1) << 2) | (((by >>> level) & 1) << 1) | ((bx >>> level) & 1);
+      if (!(mask & (1 << oct))) return false;
+      node = (n & 0xffffff) + popcount(mask & ((1 << oct) - 1));
+    }
+    const n = nodes[node] >>> 0;
+    return n === SOLID ? true : leaf(n, ix, iy, iz);
+  };
+  const CELL = nav.cellSize;
+  const NX = nav.nx, NZ = nav.nz;
+  const fl = nav.floorGridPos; // +Y up（七夜均如此；?up=-1 仅对照调试）
+  const blocked = new Uint8Array(NX * NZ);
+  let walkable = 0;
+  for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
+    const k = j * NX + i;
+    const f = fl[k];
+    if (f === null) { blocked[k] = 2; continue; }
+    const wx = nav.bboxMin[0] + (i + 0.5) * CELL, wz = nav.bboxMin[2] + (j + 0.5) * CELL;
+    const gx = Math.floor((wx - gMin[0]) / vs), gz = Math.floor((wz - gMin[2]) / vs);
+    let run = 0, maxRun = 0;
+    for (let y = f + 0.2; y < f + 1.6; y += vs) {
+      if (solid(gx, Math.floor((y - gMin[1]) / vs), gz)) { run += vs; if (run > maxRun) maxRun = run; } else run = 0;
+    }
+    blocked[k] = maxRun >= 0.5 ? 1 : 0;
+    if (!blocked[k]) walkable++;
+  }
+  const cellOf = (x, z) => [Math.floor((x - nav.bboxMin[0]) / CELL), Math.floor((z - nav.bboxMin[2]) / CELL)];
+  const walkIdx = (i, j) => (i >= 0 && j >= 0 && i < NX && j < NZ && blocked[j * NX + i] === 0) ? j * NX + i : -1;
+  /** 吸附到 ≤4 格内最近可走格（信物坐标常落在带缘/凹室内） */
+  const snapIdx = (x, z) => {
+    const [ix, iz] = cellOf(x, z);
+    const direct = walkIdx(ix, iz);
+    if (direct >= 0) return direct;
+    let best = -1, bd = 1e9;
+    for (let r = 1; r <= 4; r++)
+      for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+        const k = walkIdx(ix + dx, iz + dz);
+        if (k >= 0) { const dd = dx * dx + dz * dz; if (dd < bd) { bd = dd; best = k; } }
+      }
+    return best;
+  };
+  const wpos = (k) => ({ x: +(nav.bboxMin[0] + ((k % NX) + 0.5) * CELL).toFixed(2), z: +(nav.bboxMin[2] + (((k / NX) | 0) + 0.5) * CELL).toFixed(2) });
+  const graph = {
+    NX, NZ, stats: { walkable, total: NX * NZ },
+    /** (x,z) → 格 idx（学习动态障碍用） */
+    cellIdxAt(x, z) {
+      const [ix, iz] = cellOf(x, z);
+      return (ix >= 0 && iz >= 0 && ix < NX && iz < NZ) ? iz * NX + ix : -1;
+    },
+    /** BFS 最短路（4 邻接可走格；extra=运行期学到的「实走撞墙」格集合，一并视作不可走）
+     *  → 折线 waypoint（贪心平滑）；不可达 null */
+    path(from, to, extra) {
+      const s = snapIdx(from.x, from.z), t = snapIdx(to.x, to.z);
+      if (s < 0 || t < 0) return null;
+      const bad = (k) => (extra && extra.has(k)) || false;
+      const prev = new Int32Array(NX * NZ).fill(-2);
+      prev[s] = -1;
+      const q = [s];
+      let found = s === t;
+      for (let h = 0; h < q.length && !found; h++) {
+        const c = q[h], ci = c % NX, cj = (c / NX) | 0;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const k = walkIdx(ci + dx, cj + dz);
+          if (k < 0 || prev[k] !== -2 || bad(k)) continue;
+          prev[k] = c;
+          if (k === t) { found = true; break; }
+          q.push(k);
+        }
+      }
+      if (!found) return null;
+      const cells = [];
+      for (let c = t; c !== -1; c = prev[c]) cells.unshift(c);
+      const pts = cells.map((k) => wpos(k));
+      const clearSeg = (a, b) => { // 两点连线沿途 0.25m 采样均在可走格（且非学习障碍格）
+        const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.25));
+        for (let i = 1; i < steps; i++) {
+          const x = a.x + ((b.x - a.x) * i) / steps, z = a.z + ((b.z - a.z) * i) / steps;
+          const k = walkIdx(...cellOf(x, z));
+          if (k < 0 || bad(k)) return false;
+        }
+        return true;
+      };
+      const out = [];
+      let i = 0;
+      while (i < pts.length - 1) {
+        let j = pts.length - 1;
+        while (j > i + 1 && !clearSeg(pts[i], pts[j])) j--;
+        out.push(pts[j]);
+        i = j;
+      }
+      return out;
+    },
+  };
+  voxelGraphs.set(night, graph);
+  return graph;
+}
+
 /** B4 已知噪音（aholo-viewer 引擎层 GL 警告，E11 验收报告 item B4，不影响玩法） */
 const NOISE_PATTERNS = [
   /GL_INVALID_OPERATION/i,
@@ -109,12 +250,31 @@ export function attachDiagnostics(page, sink) {
   page.on('response', (r) => {
     if (r.status() >= 400) sink.responses.push(`${r.status()} ${r.url()}`);
   });
+  page.on('requestfailed', (r) => {
+    const err = r.failure() && r.failure().errorText;
+    sink.requestFailed.push({ url: r.url(), err: err || '' });
+  });
   page.on('crash', () => sink.errors.push('page-crash'));
   return sink;
 }
 
 export function newSink() {
-  return { console: [], errors: [], responses: [], crashed: false, warnSamples: {} };
+  return { console: [], errors: [], responses: [], crashed: false, warnSamples: {}, requestFailed: [] };
+}
+
+/**
+ * 终判错误清单：N7 livegen 缝按设计探测 http://localhost:5177/health（代理只在现场演示
+ * 机器上跑，见 scripts/live-gen-proxy.mjs），不可达时 Chrome 把该次资源加载记为
+ * console.error(net::ERR_CONNECTION_REFUSED)——游戏侧行为正确（摘除按钮走烘焙，E11
+ * item 8c 已验收）。此条件下的 REFUSED 控制台错误按已知噪音剔除（与 5177 请求失败
+ * 事件关联核对）；除此之外的错误照算。
+ */
+export function finalErrors(sink) {
+  const livegenProbeRefused = sink.requestFailed.some(
+    (f) => /:5177\//.test(f.url) && /ERR_CONNECTION_REFUSED/.test(f.err),
+  );
+  if (!livegenProbeRefused) return sink.errors;
+  return sink.errors.filter((e) => !e.includes('ERR_CONNECTION_REFUSED'));
 }
 
 /** 等 __game.night.stage === stage（游戏状态机阶段，polling 游戏侧 250ms） */
@@ -132,19 +292,6 @@ export function nightDebug(page) {
 export function gameState(page) {
   return page.evaluate(() => window.__game && window.__game.state);
 }
-export function getPos(page) {
-  return page.evaluate(() => window.__game && window.__game.getPos());
-}
-
-/**
- * N1 关键坐标（与 src/game/config.ts N1 定义同步抄录——游戏 debug API 不暴露门位，
- * 此处是唯一硬编码；若 config 改动需同步）：
- * door (-12.3, 0.35) r1.5 / spawn (-11.8, 0.35) / loot: oil(-9.0,0.9) lantern(-4.5,-0.5) watch(0.7,0.3)
- */
-export const N1 = {
-  door: { x: -12.3, z: 0.35 },
-  spawn: { x: -11.8, z: 0.35 },
-};
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -156,48 +303,6 @@ export async function playTitleToDive(page, { archetypeIdx = 0, diveTimeout = 12
   await page.waitForSelector('.g-morning', { timeout: 15_000 });
   await page.locator('.g-morning .g-btn.primary').click();
   await waitStage(page, 'dive', diveTimeout);
-}
-
-/** 拾取全部未取信物：hopTo 实走 + api.pickup（E 键等价）兜底，返回 taken 数与明细 */
-export async function collectAllLoot(page, { hop = 0.7, timeoutPerItem = 45 } = {}) {
-  const items = await page.evaluate(() => window.__game.api.itemPositions());
-  const detail = [];
-  let taken = 0;
-  for (const it of items) {
-    if (it.taken) { detail.push({ id: it.id, preTaken: true }); continue; }
-    const hopRes = await page.evaluate(
-      ({ x, z, hop, t }) => window.__probe.hopTo(x, z, { hop, timeout: t, sprint: false }),
-      { x: it.x, z: it.z, hop, t: timeoutPerItem },
-    );
-    const picked = await page.evaluate(() => window.__game.api.pickup());
-    if (picked) taken++;
-    detail.push({ id: it.id, picked, finalDist: hopRes && hopRes.finalDist, ok: hopRes && hopRes.ok });
-  }
-  return { taken, detail };
-}
-
-/** 走到门并归航（returnHome=endDive('return')，E 键等价的调试通道） */
-export async function walkDoorAndReturn(page, door, { hop = 0.7, timeout = 45 } = {}) {
-  const hopRes = await page.evaluate(
-    ({ x, z, hop, t }) => window.__probe.hopTo(x, z, { hop, timeout: t, sprint: false }),
-    { x: door.x, z: door.z, hop, t: timeout },
-  );
-  await page.evaluate(() => window.__game.setInput(0, 0));
-  const dist = await page.evaluate(
-    ({ x, z }) => { const p = window.__game.getPos(); return Math.hypot(p.x - x, p.z - z); },
-    { x: door.x, z: door.z },
-  );
-  const ret = await page.evaluate(() => window.__game.api.returnHome());
-  return { hopRes, doorDist: +dist.toFixed(2), returned: ret !== false };
-}
-
-/** 结算→夜谈→进度 三连（点 UI 按钮，等屏幕挂载） */
-export async function playSettleTalkProgress(page) {
-  await page.waitForSelector('.g-settle', { timeout: 20_000 });
-  await page.locator('.g-settle .g-btn.primary').click();
-  await page.waitForSelector('.g-talk', { timeout: 15_000 });
-  await page.locator('.g-talk .g-btn.primary').click();
-  await page.waitForSelector('.g-progress', { timeout: 15_000 });
 }
 
 /** rAF 帧推进计数（harness 验证：锁屏下 rAF 是否活着） */

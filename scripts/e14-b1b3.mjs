@@ -15,7 +15,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  DEPLOY_URL, OUT_DIR, launchBrowser, injectProbe, attachDiagnostics, newSink, waitStage, sleep,
+  DEPLOY_URL, OUT_DIR, launchBrowser, injectProbe, attachDiagnostics, newSink, waitStage, sleep, finalErrors,
 } from './e14-lib.mjs';
 
 /** B1 三复现点（修复说明同款坐标）+ 各夜出生朝向（config.ts 同步抄录） */
@@ -126,13 +126,13 @@ async function main() {
     }
     console.log('[B3]', JSON.stringify(out.b3));
 
-    out.errors = sink.errors.slice(0, 10);
+    out.errors = finalErrors(sink).slice(0, 10);
     out.responses = sink.responses.slice(0, 10);
     out.verdict = {
       b1: out.b1.length === 3 && out.b1.every((r) => r.pass) ? 'PASS' : 'FAIL',
       b3: out.b3 && out.b3.pass ? 'PASS' : 'FAIL',
       spawn: out.spawn.length === 6 && out.spawn.every((r) => r.pass) ? 'PASS' : 'FAIL',
-      errors: sink.errors.length === 0 ? 'PASS' : 'FAIL',
+      errors: finalErrors(sink).length === 0 ? 'PASS' : 'FAIL',
     };
     out.verdictAll = Object.values(out.verdict).every((v) => v === 'PASS') ? 'PASS' : 'FAIL';
   } catch (e) {

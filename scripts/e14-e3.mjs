@@ -26,7 +26,7 @@ import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DEPLOY_URL, OUT_DIR, launchBrowser, injectProbe, attachDiagnostics, newSink,
-  waitStage, gameState, nightDebug, sleep, appendJsonl, installWalker,
+  waitStage, gameState, nightDebug, sleep, appendJsonl, installWalker, finalErrors,
 } from './e14-lib.mjs';
 
 /** N1 坐标（src/game/config.ts N1 同步抄录；config 改动需同步） */
@@ -135,7 +135,7 @@ async function coreRun(browser, runId) {
     rec.paid = ledger.some((r) => r.type === 'paid' && r.night === 1);
     rec.stateHealthy = st.stage === 'progress' && st.night === 1 && Array.isArray(st.errors) && st.errors.length === 0;
     rec.steps.n2Unlocked = unlocked >= 2;
-    rec.errors = sink.errors.slice(0, 8);
+    rec.errors = finalErrors(sink).slice(0, 8);
     rec.responses = sink.responses.slice(0, 8);
     rec.crashed = sink.crashed;
 

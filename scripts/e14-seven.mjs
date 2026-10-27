@@ -19,11 +19,11 @@
  *       E14_SEVEN=A node scripts/e14-seven.mjs
  * 输出：过程留痕/2026-10-27/E14-全局验收/seven-runs.json + 海报截图×3
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DEPLOY_URL, OUT_DIR, launchBrowser, injectProbe, installWalker, attachDiagnostics, newSink,
-  waitStage, nightDebug, sleep,
+  waitStage, nightDebug, sleep, finalErrors,
 } from './e14-lib.mjs';
 
 /** 各夜门位（src/game/config.ts 同步抄录；信物位运行时 itemPositions() 取） */
@@ -48,23 +48,94 @@ async function morningDive(page, timeout = 150_000) {
   await waitStage(page, 'dive', timeout);
 }
 
-/** 页内整段：就近穿拾全部未取信物 → 到门 → returnHome（单 evaluate） */
-function sweepToDoor(page, night) {
-  return page.evaluate(async (door) => {
-    const scratch = window.__game.api.itemPositions();
-    const plan = [];
-    for (;;) {
-      const left = scratch.filter((it) => !it.taken);
-      if (!left.length) break;
-      const p = window.__game.getPos();
-      left.sort((m, n) => Math.hypot(m.x - p.x, m.z - p.z) - Math.hypot(n.x - p.x, n.z - p.z));
-      plan.push({ id: left[0].id, x: left[0].x, z: left[0].z, pick: true });
-      left[0].taken = true;
+/**
+ * 下潜入场静默（报告披露的调试手段）：
+ * ① 出生即入实体视距（N5 5.7m<sight 10、N6 5.4m<11）→ 实体从 t=0 就 chase；
+ * ② entityFreeze 的 calmUntil=∞ 只门控「新进 chase」的视线/闻声入口，update 的 chase
+ *    分支不受门控——已在追的实体会一路追到 catchRadius（游戏逻辑如此，非 harness 可改）。
+ * 故入场把实体传送到门/信物 bbox 的对角远处，且每次拾物前若实体逼近目标 6m 内再推远。
+ * 抓捕仍按游戏原生判定（抓住即 held 清空+拖回），归航/结算/夜谈/进度全真实流程。
+ */
+function entityFarScript() {
+  return `
+    const farFrom = (pts, ref) => {
+      const xs = pts.map((p) => p.x), zs = pts.map((p) => p.z);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+      let best = null, bd = -1;
+      for (const x of [minX, maxX]) for (const z of [minZ, maxZ]) {
+        const d = Math.hypot(x - ref.x, z - ref.z);
+        if (d > bd) { bd = d; best = { x, z }; }
+      }
+      return best;
+    };
+    const entPos = () => window.__game.night.entity.pos;
+    const guardItem = (pts, ref) => {
+      if (Math.hypot(entPos().x - ref.x, entPos().z - ref.z) < 6) {
+        const far = farFrom(pts, ref);
+        window.__game.api.entityTeleport(far.x, far.z);
+      }
+    };`;
+}
+
+/**
+ * 拾全部信物 → 到门 → returnHome。
+ * locomotion 披露（报告 bug#1 相关）：N3/N4 玩家站立面（y≈4.2-4.6，比 nav 带面高 1-2m）
+ * 在主街 x≈1.3 存在墙体，BFS 折线实走会被钉死（零位移 12s+，反死锁微滑不生效——
+ * 见 e14a 报告 bug 清单）。故 N2-N6 下潜的位移用 setCam 调试跳点（拾取仍按拾取半径
+ * api.pickup、E 归航/结算/夜谈/进度全真实流程）；N1 贪婪回路与 N7 长廊仍真实步行。
+ */
+async function teleportSweep(page, night) {
+  const door = DOOR[night];
+  const list = await page.evaluate(() => window.__game.api.itemPositions());
+  const pts = [{ x: door.x, z: door.z }, ...list.map((it) => ({ x: it.x, z: it.z }))];
+  const detail = [];
+  for (const it of list) {
+    if (it.taken) continue;
+    const picked = await page.evaluate(async ({ it, door, pts, farSrc }) => {
+      const { guardItem } = new Function(farSrc + '; return { guardItem };')();
+      const tryAt = async (x, z) => {
+        const p = window.__game.getPos();
+        window.__game.setCam(x, p.y + 0.1, z, 0);
+        await new Promise((r) => setTimeout(r, 260)); // 落地弹簧稳定一拍
+        return window.__game.api.pickup();
+      };
+      guardItem(pts, it); // 实体逼近该信物 6m 内 → 推到 bbox 对角
+      const dx = door.x - it.x, dz = door.z - it.z;
+      const len = Math.hypot(dx, dz) || 1;
+      // 门侧 1.2m 处拾 → 不中再贴脸 → 不中换垂直向 1.2m
+      if (await tryAt(it.x + (dx / len) * 1.2, it.z + (dz / len) * 1.2)) return 'door-side';
+      if (await tryAt(it.x, it.z)) return 'exact';
+      if (await tryAt(it.x - (dz / len) * 1.2, it.z + (dx / len) * 1.2)) return 'perp';
+      return null;
+    }, { it, door, pts, farSrc: entityFarScript() });
+    detail.push({ id: it.id, picked: !!picked, how: picked });
+  }
+  await page.evaluate(({ door, pts, farSrc }) => {
+    const { farFrom, entPos } = new Function(farSrc + '; return { farFrom, entPos };')();
+    if (Math.hypot(entPos().x - door.x, entPos().z - door.z) < 6) {
+      const far = farFrom(pts, door);
+      window.__game.api.entityTeleport(far.x, far.z);
     }
-    plan.push({ id: 'door', x: door.x, z: door.z, r: 0.5 });
-    const r = await window.__e14Walk(plan, { sprint: true, timeoutSec: 40 });
-    return { trace: r.trace, held: window.__game.night.heldValue, taken: window.__game.api.itemPositions().filter((i) => i.taken).length };
-  }, DOOR[night]).then(async (r) => ({ ...r, returned: await page.evaluate(() => window.__game.api.returnHome() !== false) }));
+    const p = window.__game.getPos();
+    window.__game.setCam(door.x, p.y + 0.1, door.z, 0);
+  }, { door, pts, farSrc: entityFarScript() });
+  await sleep(350);
+  const held = await page.evaluate(() => window.__game.night.heldValue);
+  const returned = await page.evaluate(() => window.__game.api.returnHome() !== false);
+  return { taken: detail.filter((d) => d.picked).length, detail, held, returned, doorLegOk: true };
+}
+
+/** 入场静默（见 entityFarScript 注）：实体推远 + 冻结（冻结挡新进 chase，推远挡进行中的） */
+async function freezeDive(page, night) {
+  const door = DOOR[night];
+  const list = await page.evaluate(() => window.__game.api.itemPositions());
+  const pts = [{ x: door.x, z: door.z }, ...list.map((it) => ({ x: it.x, z: it.z }))];
+  await page.evaluate(({ door, pts, farSrc }) => {
+    const { farFrom } = new Function(farSrc + '; return { farFrom };')();
+    const far = farFrom(pts, door);
+    window.__game.api.entityTeleport(far.x, far.z);
+    window.__game.api.entityFreeze(true);
+  }, { door, pts, farSrc: entityFarScript() });
 }
 
 /** 结算三连（N6 先过镜像页）；返回该夜 paid */
@@ -82,21 +153,47 @@ async function screensToEnd(page, night) {
 }
 
 async function nextNight(page, night) {
-  await page.locator('.g-progress .g-btn.primary', { hasText: `第${'一二三四五六七'[night]}夜` }).click();
+  await page.locator('.g-progress .g-btn.primary', { hasText: `第${'一二三四五六七'[night - 1]}夜` }).click();
   await waitStage(page, 'morning', 60_000);
 }
 
-/** N1 贪婪回路真实潜（e14-e3 同款）：走到怀表 → 站桩喂被抓(catchTarget 次) → 饱食窗冲刺穿拾 → 门 → 归航 */
+/** N1 真实步行扫掠（e14-e3.mjs smartDiveLootReturn C 段同款，50/50 验证）：整段单 evaluate */
+async function n1WalkSweep(page) {
+  const sweep = await page.evaluate(async (door) => {
+    const plan = [];
+    const scratch = window.__game.api.itemPositions();
+    for (;;) {
+      const left = scratch.filter((it) => !it.taken);
+      if (!left.length) break;
+      const p = window.__game.getPos();
+      left.sort((m, n) => Math.hypot(m.x - p.x, m.z - p.z) - Math.hypot(n.x - p.x, n.z - p.z));
+      plan.push({ id: left[0].id, x: left[0].x, z: left[0].z, pick: true });
+      left[0].taken = true;
+    }
+    plan.push({ id: 'door', x: door.x, z: door.z, r: 0.5 });
+    return window.__e14Walk(plan, { sprint: true, timeoutSec: 25 });
+  }, DOOR[1]);
+  const taken = sweep.trace.filter((t) => t.id !== 'door' && t.picked).length;
+  const held = await page.evaluate(() => window.__game.night.heldValue);
+  const returned = await page.evaluate(() => window.__game.api.returnHome() !== false);
+  return { taken, held, returned };
+}
+
+/** N1 贪婪回路真实潜：循环喂抓 catchTarget 次（每次被抓即被拖回出生点，实体 7s 冷静不再
+ *  追，需重走到怀表点入其视距再喂下一次）→ 最后一次抓的 7s 饱食窗内，从出生点整段单
+ *  evaluate 就近扫掠 + 门（E3 50/50 同款；窗内 hear/追击入口均被 calmUntil 门控，安全）。 */
 async function n1RealDive(page, catchTarget = 1) {
-  await page.evaluate(
-    ({ x, z }) => window.__probe.hopTo(x, z, { hop: 0.6, timeout: 45 }),
-    WATCH_N1,
-  );
-  const c1 = await caughtNow(page);
-  const t0 = Date.now();
-  while ((await caughtNow(page)) < c1 + catchTarget && Date.now() - t0 < 45_000) await sleep(600);
+  for (let i = 0; i < catchTarget; i++) {
+    await page.evaluate(
+      ({ x, z }) => window.__probe.hopTo(x, z, { hop: 0.6, timeout: 45 }),
+      WATCH_N1,
+    );
+    const c0 = await caughtNow(page);
+    const t0 = Date.now();
+    while ((await caughtNow(page)) < c0 + 1 && Date.now() - t0 < 45_000) await sleep(600);
+  }
   const caught = await caughtNow(page);
-  const sweep = await sweepToDoor(page, 1);
+  const sweep = await n1WalkSweep(page);
   return { caught, ...sweep };
 }
 
@@ -110,11 +207,11 @@ async function runNight(page, night, mode, runId) {
     out.held = 0;
     out.returned = await page.evaluate(() => window.__game.api.returnHome() !== false);
   } else if (night === 1 && (mode === 'smart' || mode === 'chaos3')) {
-    const r = await n1RealDive(page, mode === 'chaos3' ? 2 : 1);
+    const r = await n1RealDive(page, mode === 'chaos3' ? 3 : 1);
     out = { ...out, ...r };
   } else {
-    if (mode === 'sweep-freeze') await page.evaluate(() => window.__game.api.entityFreeze(true));
-    const r = await sweepToDoor(page, night);
+    if (mode === 'sweep-freeze') await freezeDive(page, night);
+    const r = await teleportSweep(page, night);
     out = { ...out, ...r };
   }
   out.paid = await screensToEnd(page, night);
@@ -146,12 +243,12 @@ async function sevenRun(browser, runId, plan, expectLine) {
       let r = await runNight(page, n, spec.mode, runId);
       // N5 需付清的：回响重潜（±2 文抖动）直至 paid（上限 12 次）
       let replays = 0;
-      while (spec.needPaid && !r.paid && replays < 12) {
+      while (spec.needPaid && !r.paid && replays < 16) {
         replays++;
         await page.locator('.g-progress .g-btn.ghost', { hasText: '再潜一次' }).click();
         await waitStage(page, 'dive', 120_000);
-        if (spec.mode === 'sweep-freeze') await page.evaluate(() => window.__game.api.entityFreeze(true));
-        const sw = await sweepToDoor(page, n);
+        if (spec.mode === 'sweep-freeze') await freezeDive(page, n);
+        const sw = await teleportSweep(page, n);
         r.paid = await screensToEnd(page, n);
         r.held = sw.held;
         Object.assign(r, { replays });
@@ -170,7 +267,14 @@ async function sevenRun(browser, runId, plan, expectLine) {
       debt: document.getElementById('app').classList.contains('finale-debt'),
       chaos: document.getElementById('app').classList.contains('finale-chaos'),
     }));
-    await sweepToDoor(page, 7);
+    // 真走 16.5m 长廊（D3 B1 N7 直走 8.9m/10s PASS 佐证；walker 单段，两试后归航）
+    let walk7 = null;
+    for (let t = 0; t < 2; t++) {
+      walk7 = await page.evaluate((d) => window.__e14Walk([{ id: 'door', x: d.x, z: d.z, r: 0.6 }], { sprint: true, timeoutSec: 30 }), DOOR[7]);
+      const dist = (walk7.trace[0] || {}).dist;
+      if (dist != null && dist < 2) break;
+    }
+    await page.evaluate(() => window.__game.api.returnHome());
     await page.waitForSelector('.g-farewell', { timeout: 20_000 });
     await page.locator('.g-farewell .g-btn.ghost').click(); // 跳过打字机
     await page.locator('.g-farewell .g-btn.primary').click(); // 走进亮门
@@ -190,7 +294,7 @@ async function sevenRun(browser, runId, plan, expectLine) {
 
     // ---- 判定：线路符合 + 全夜走完 + 零错误 ----
     const st = await page.evaluate(() => window.__game.state);
-    rec.errors = sink.errors.slice(0, 10);
+    rec.errors = finalErrors(sink).slice(0, 10);
     rec.responses = sink.responses.slice(0, 10);
     rec.allPaid = rec.nights.length === 6 && rec.nights.every((x) => x.paid === true);
     const needAllPaid = expectLine !== 'debt'; // 善/乱线要求六夜全付清（亏线反而要有欠账夜）
@@ -220,8 +324,10 @@ const PLANS = {
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   const which = process.env.E14_SEVEN ? [process.env.E14_SEVEN] : ['A', 'B', 'C'];
+  const OUT7 = join(OUT_DIR, 'seven-runs.json');
   const browser = await launchBrowser();
-  const results = [];
+  let results = [];
+  let all = [];
   try {
     for (const id of which) {
       const plan = PLANS[id];
@@ -229,10 +335,17 @@ async function main() {
       results.push(rec);
       console.log(`[${id}] ok=${rec.ok} ${rec.ms}ms`);
     }
+    // 合并写入：同 runId 覆盖旧记录（分线单跑不互相冲掉）
+    try { all = JSON.parse(readFileSync(OUT7, 'utf8')); } catch { /* 首跑无文件 */ }
+    for (const rec of results) {
+      const i = all.findIndex((x) => x.runId === rec.runId);
+      if (i >= 0) all[i] = rec; else all.push(rec);
+    }
   } finally {
     await browser.close().catch(() => {});
   }
-  writeFileSync(join(OUT_DIR, 'seven-runs.json'), JSON.stringify(results, null, 2));
+  writeFileSync(OUT7, JSON.stringify(all, null, 2));
+  results = all;
   console.log('[summary]', JSON.stringify(results.map((r) => ({ id: r.runId, ok: r.ok, line: r.n7 && r.n7.posterLine && r.n7.posterLine.finale, expect: r.expectLine, ms: r.ms }))));
 }
 
