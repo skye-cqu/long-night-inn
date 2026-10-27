@@ -38,6 +38,8 @@ export class VoxelCollision {
     { x: 0, y: 0, z: 0 },
     { x: 0, y: 0, z: 0 },
   ];
+  /** B1 踏步辅助：最近一次胶囊碰撞最深穿入体素的可站顶面 y（上方为空才算可站；null=不可踏） */
+  private lastStepTopY: number | null = null;
 
   constructor(metadata: VoxelMeta, nodes: Uint32Array, leafData: Uint32Array) {
     this.gridMinX = metadata.gridBounds.min[0]!;
@@ -209,9 +211,18 @@ export class VoxelCollision {
     cz: number,
     halfHeight: number,
     radius: number,
-    out: { x: number; y: number; z: number },
+    out: { x: number; y: number; z: number; topY?: number | null },
   ): boolean {
-    return this.resolveIterative(cx, cy, cz, (rx, ry, rz, push) => this.resolveDeepestPenetrationCapsule(rx, ry, rz, halfHeight, radius, push), out);
+    this.lastStepTopY = null;
+    const hit = this.resolveIterative(
+      cx,
+      cy,
+      cz,
+      (rx, ry, rz, push) => this.resolveDeepestPenetrationCapsule(rx, ry, rz, halfHeight, radius, push),
+      out,
+    );
+    if (hit) out.topY = this.lastStepTopY;
+    return hit;
   }
 
   /** 读一个叶子里的 packed bit */
@@ -316,6 +327,8 @@ export class VoxelCollision {
             bestPushY = py;
             bestPushZ = pz;
             found = true;
+            // B1：正上方为空 = 真实台阶顶面（可踏）；上方还有实体 = 墙体中段（不可踏）
+            this.lastStepTopY = this.isVoxelSolid(ix, iy + 1, iz) ? null : vMaxY;
           }
         }
       }

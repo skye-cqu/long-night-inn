@@ -30,6 +30,10 @@ const STAMINA_MAX = 100;
 const STAMINA_DRAIN = 26; // /s 跑步消耗
 const STAMINA_REGEN = 14; // /s 恢复
 const STAMINA_SPRINT_MIN = 20; // 低于此值强制回走，恢复过 20 才能再跑
+const STEP_UP_MAX = 0.55; // B1 自动踏步：顶面在脚面之上 ≤ 此高度且上方为空的可站障碍由弹簧抬上（高于此=墙）
+const WEDGE_TRIGGER = 72; // B1 反死锁：连续「有移动意图但零位移」子步数（≈1.2s）后开始微滑
+const WEDGE_INTERVAL = 9; // 触发后每 ~0.15s 微滑一次
+const WEDGE_NUDGE = 0.045; // 每次微滑距离（m）
 
 export type Gait = 'walk' | 'sprint' | 'crouch';
 
@@ -82,6 +86,12 @@ export class WalkControls {
   private textMode = false;
   private eyeSmooth = EYE_HEIGHT;
   private staminaLock = false;
+  /** B1 踏步目标面（碰撞侧低矮可站障碍的顶面 y；null=无）与保持时长 */
+  private stepUpY: number | null = null;
+  private stepUpHold = 0;
+  /** B1 反死锁：连续「有移动意图但位移≈0」的子步计数 + 最近一次水平推离方向（微滑选边参考） */
+  private wedgeSteps = 0;
+  private lastPushXZ = { x: 0, z: 0 };
 
   constructor(container: HTMLElement, nav: NavField, collision: VoxelCollision | null) {
     this.container = container;
@@ -112,6 +122,9 @@ export class WalkControls {
       }
     }
     this.accumulator = 0;
+    this.stepUpY = null;
+    this.stepUpHold = 0;
+    this.wedgeSteps = 0;
     this.enabled = true;
   }
 
@@ -200,12 +213,29 @@ export class WalkControls {
     const targetX = len > 1e-6 ? (mx / len) * moveSpeed : 0;
     const targetZ = len > 1e-6 ? (mz / len) * moveSpeed : 0;
 
+    const subX0 = this.position.x;
+    const subZ0 = this.position.z;
     if (this.collision) {
       this.stepVoxel(dt, targetX, targetZ);
     } else {
       this.stepSimplified(dt, targetX, targetZ);
     }
     this.resolveBarriers();
+    // B1 反死锁（格边/凸角咬合）：有移动意图却持续零位移（推离与位移逐子步完全抵消）时，
+    // 沿垂直于移动方向做碰撞安全的微滑——即验收报告里玩家「多方向连按 10s 挣脱」的自动化。
+    if (
+      Math.hypot(targetX, targetZ) > 0.4 &&
+      this.grounded &&
+      Math.hypot(this.position.x - subX0, this.position.z - subZ0) < 6e-4
+    ) {
+      this.wedgeSteps++;
+      if (this.wedgeSteps >= WEDGE_TRIGGER) {
+        this.applyWedgeNudge();
+        this.wedgeSteps -= WEDGE_INTERVAL;
+      }
+    } else {
+      this.wedgeSteps = 0;
+    }
     this.speed = Math.hypot(this.velocity.x, this.velocity.z);
   }
 
@@ -260,9 +290,21 @@ export class WalkControls {
       this.groundYFiltered = null;
     }
     const groundY = this.groundYFiltered ?? rawGroundY;
+    // B1 自动踏步：探地射线从脚部向下，看不见「顶面高于脚面」的台阶——这种台阶以前被
+    // 胶囊水平推离挡成死墙。resolveCollision 识别出 ≤STEP_UP_MAX 的可站顶面（stepUpY）
+    // 时以其为地面目标，弹簧把玩家抬上去；探地中位追平台阶面（站稳）或保持超 1s 即撤除。
+    let groundFinal = groundY;
+    if (this.stepUpY !== null) {
+      groundFinal = groundFinal === null ? this.stepUpY : Math.max(groundFinal, this.stepUpY);
+      this.stepUpHold += dt;
+      if ((rawGroundY !== null && rawGroundY >= this.stepUpY - 0.05) || this.stepUpHold > 1) {
+        this.stepUpY = null;
+        this.stepUpHold = 0;
+      }
+    }
 
-    if (groundY !== null) {
-      const targetY = groundY + HOVER_HEIGHT + this.eyeSmooth;
+    if (groundFinal !== null) {
+      const targetY = groundFinal + HOVER_HEIGHT + this.eyeSmooth;
       const displacement = this.position.y - targetY;
       if (displacement > 0.1) {
         // 高于地面：重力下落
@@ -341,7 +383,7 @@ export class WalkControls {
     if (!this.collision) return;
     const centerY = this.position.y - EYE_HEIGHT + CAPSULE_HEIGHT * 0.5;
     const half = CAPSULE_HEIGHT * 0.5 - CAPSULE_RADIUS;
-    const push = { x: 0, y: 0, z: 0 };
+    const push: { x: number; y: number; z: number; topY?: number | null } = { x: 0, y: 0, z: 0 };
     if (this.collision.queryCapsule(this.position.x, centerY, this.position.z, half, CAPSULE_RADIUS, push)) {
       this.position.x += push.x;
       this.position.y += push.y;
@@ -351,6 +393,57 @@ export class WalkControls {
         this.velocity.y = 0;
         this.grounded = true;
       }
+      // B1：记录水平推离（微滑选边参考）；低矮可站障碍登记为踏步目标——
+      // 顶面在脚面之上 ≤STEP_UP_MAX 且上方为空（collision 侧判定）才可踏。
+      this.lastPushXZ.x = push.x;
+      this.lastPushXZ.z = push.z;
+      const topY = push.topY ?? null;
+      const feetY = this.position.y - EYE_HEIGHT;
+      if (
+        topY !== null &&
+        topY > feetY - 0.05 &&
+        topY - feetY <= STEP_UP_MAX &&
+        Math.hypot(this.velocity.x, this.velocity.z) > 0.3
+      ) {
+        if (this.stepUpY === null || topY > this.stepUpY) this.stepUpY = topY;
+        this.stepUpHold = 0;
+      }
+    }
+  }
+
+  /** B1 反死锁微滑：沿垂直于当前移动方向的两侧探测，取碰撞安全的一侧平移 WEDGE_NUDGE。
+   *  优先沿最近推离方向的切向侧（沿障碍面滑出的自然方向）；两侧都撞（凹角）则不动——
+   *  凹角本来就该挡住。移动前先在该位置做胶囊碰撞测试，保证永不进墙体素。 */
+  private applyWedgeNudge() {
+    if (!this.collision) return;
+    const len = Math.hypot(this.velocity.x, this.velocity.z);
+    if (len < 0.2) return;
+    const dx = this.velocity.x / len;
+    const dz = this.velocity.z / len;
+    const centerY = this.position.y - EYE_HEIGHT + CAPSULE_HEIGHT * 0.5;
+    const half = CAPSULE_HEIGHT * 0.5 - CAPSULE_RADIUS;
+    let pick: { x: number; z: number } | null = null;
+    for (const side of [-1, 1]) {
+      const px = -dz * side;
+      const pz = dx * side;
+      const free = !this.collision.queryCapsule(
+        this.position.x + px * (WEDGE_NUDGE + 0.01),
+        centerY,
+        this.position.z + pz * (WEDGE_NUDGE + 0.01),
+        half,
+        CAPSULE_RADIUS,
+        { x: 0, y: 0, z: 0 },
+      );
+      if (!free) continue;
+      if (px * this.lastPushXZ.x + pz * this.lastPushXZ.z > 0.01) {
+        pick = { x: px, z: pz };
+        break;
+      }
+      pick = pick ?? { x: px, z: pz };
+    }
+    if (pick) {
+      this.position.x += pick.x * WEDGE_NUDGE;
+      this.position.z += pick.z * WEDGE_NUDGE;
     }
   }
 

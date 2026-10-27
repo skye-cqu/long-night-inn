@@ -180,6 +180,8 @@ export class Game {
   // 下潜运行时
   private timeLeft: number = NIGHTS[0]!.diveSeconds;
   private held: LootItem[] = [];
+  /** B2：终幕亮门前庭标记（目标行/进门提示互斥让位） */
+  private farewellNear = false;
   private caughtCount = 0;
   private nearMiss = 0;
   private spoken = 0;
@@ -853,12 +855,14 @@ export class Game {
     } else if (doorD < def.doorReturnRadius) {
       if (def.finale) {
         this.hud.setPrompt('按 E 走进亮门 · 告别');
+        if (!this.farewellNear) { this.farewellNear = true; this.hud.setGoalText(''); }
       } else {
         const canReturn = this.held.length > 0 || this.caughtCount > 0 || this.timeLeft < 30;
         this.hud.setPrompt(canReturn ? '按 E 推门归航' : '门在这里。天亮前带着值钱物回来。');
       }
     } else if (!(this.survivor?.isPresent && this.survivor.state === 'waiting' && Math.hypot(this.survivor.pos.x - ps.position.x, this.survivor.pos.z - ps.position.z) < 2.5)) {
       this.hud.setPrompt(null);
+      if (this.farewellNear) { this.farewellNear = false; this.hud.setGoalText('沿长廊向东走 · 尽头的亮门'); }
     }
 
     this.items.update(t, dt);
