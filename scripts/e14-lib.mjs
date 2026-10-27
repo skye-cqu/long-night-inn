@@ -41,6 +41,46 @@ export function injectProbe(page) {
   return page.evaluate(new Function(PROBE_SRC));
 }
 
+/**
+ * 精走器（页面侧，90ms 步进）：probe.hopTo 的 0.5s hop 粒度在冲刺下过冲回弹
+ * （5m 支路 5 跳 ≈ 2.1m/s 均速）+ 每跳 evaluate 往返延迟，赶不上抓捕后 7s 饱食窗。
+ * 本走器整段计划单次 evaluate 页内执行：沿途连续移动、穿拾（d<1.35 时 api.pickup）、
+ * 近目标收油门防过冲。仍只用 setInput/setYaw/setSprint/pickup 调试 API，不碰游戏代码。
+ * plan: [{ id, x, z, pick?: true, r?: 到点半径 }]；opts: { sprint, timeoutSec }
+ */
+const WALKER_SRC = `
+window.__e14Walk = async function (plan, opts) {
+  const o = Object.assign({ sprint: true, timeoutSec: 25 }, opts || {});
+  const g = () => window.__game;
+  const trace = [];
+  const t0 = performance.now();
+  const deadline = t0 + o.timeoutSec * 1000;
+  for (const wp of plan) {
+    let picked = !wp.pick;
+    let gaveUp = false;
+    while (performance.now() < deadline) {
+      const p = g().getPos();
+      const d = Math.hypot(wp.x - p.x, wp.z - p.z);
+      if (wp.pick && !picked && d < 1.35) picked = !!g().api.pickup();
+      if (d < (wp.r || 0.55) || (wp.pick && picked)) break;
+      g().setYaw(Math.atan2(wp.z - p.z, wp.x - p.x));
+      g().setSprint(!!o.sprint && d > 1.6);
+      g().setInput(1, 0);
+      await new Promise((r) => setTimeout(r, 90));
+    }
+    g().setInput(0, 0);
+    g().setSprint(false);
+    trace.push({ id: wp.id, picked: wp.pick ? picked : undefined, dist: +(Math.hypot(wp.x - g().getPos().x, wp.z - g().getPos().z)).toFixed(2), ms: Math.round(performance.now() - t0) });
+    if (performance.now() >= deadline) gaveUp = true;
+    if (gaveUp) break;
+  }
+  return { trace, done: performance.now() < deadline };
+};
+`;
+export function installWalker(page) {
+  return page.evaluate(new Function(WALKER_SRC));
+}
+
 /** B4 已知噪音（aholo-viewer 引擎层 GL 警告，E11 验收报告 item B4，不影响玩法） */
 const NOISE_PATTERNS = [
   /GL_INVALID_OPERATION/i,
@@ -59,6 +99,11 @@ export function attachDiagnostics(page, sink) {
     const text = m.text();
     sink.console.push({ type, text: String(text).slice(0, 260) });
     if (type === 'error' && !isNoise(text)) sink.errors.push(`console.error: ${String(text).slice(0, 260)}`);
+    if (type === 'warning' && !isNoise(text)) {
+      // 非 GL 噪音的 warning 留采样（前缀 60 字符聚合计数——生产首验要知道还有什么在响）
+      const key = String(text).slice(0, 60);
+      sink.warnSamples[key] = (sink.warnSamples[key] || 0) + 1;
+    }
   });
   page.on('pageerror', (e) => sink.errors.push(`pageerror: ${String(e && e.message ? e.message : e).slice(0, 260)}`));
   page.on('response', (r) => {
@@ -69,7 +114,7 @@ export function attachDiagnostics(page, sink) {
 }
 
 export function newSink() {
-  return { console: [], errors: [], responses: [], crashed: false };
+  return { console: [], errors: [], responses: [], crashed: false, warnSamples: {} };
 }
 
 /** 等 __game.night.stage === stage（游戏状态机阶段，polling 游戏侧 250ms） */
