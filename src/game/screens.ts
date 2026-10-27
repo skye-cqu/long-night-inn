@@ -8,6 +8,7 @@ import type { Sfx } from './audio';
 import type { LedgerRecord } from './ledger';
 import { buildBillCardDom, saveBillCardPng, type BillCardData } from './billcard';
 import type { MirrorView } from './mirror';
+import type { FarewellView } from './farewell';
 
 function h(tag: string, cls?: string, html?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -15,6 +16,12 @@ function h(tag: string, cls?: string, html?: string): HTMLElement {
   if (html !== undefined) e.innerHTML = html;
   return e;
 }
+
+/** 动态文本进 innerHTML 前转义（告别陈词含玩家名/夜谈原话等自由文本；C4 海报同用） */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+void esc;
 
 const AI_MARK = '本作 3D 资产由 AI 生成 · AI 生成内容已按平台规范标示';
 
@@ -289,6 +296,64 @@ export class Screens {
       onContinue();
     };
     row.append(next);
+    scr.append(row);
+    this.mount(scr);
+  }
+
+  // ---- 告辞页（N7 终幕）：世界透出的半透明底上，陈词打字机式渐显，可跳过 ----
+  farewell(view: FarewellView, onContinue: () => void) {
+    const scr = h('div', 'g-screen g-farewell');
+    scr.innerHTML = `
+      <h2>告辞 · 陈词</h2>
+      <div class="g-farewell-sub">亮门开着，晨光落在花海上。伙计跳上门边的石墩，翻开他背下来的账本——</div>
+    `;
+    const blocks = h('div', 'g-farewell-blocks');
+    const paras = view.paragraphs.map((text) => {
+      const el = h('div', 'g-farewell-p');
+      blocks.append(el);
+      return { el, text };
+    });
+    scr.append(blocks);
+    const row = h('div', 'g-btn-row center');
+    const skip = h('button', 'g-btn ghost', '跳过 ▸▸');
+    const next = h('button', 'g-btn primary', '走进亮门 →');
+    next.style.display = 'none';
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      window.clearInterval(timer);
+      for (const p of paras) p.el.textContent = p.text; // 打字机收尾：整段补齐
+      skip.style.display = 'none';
+      next.style.display = '';
+    };
+    // 打字机：逐字逐段推进（26ms/字；段落切换零间隔——段与段的呼吸由 CSS 段落入场错峰承担）
+    let pi = 0;
+    let ci = 0;
+    const timer = window.setInterval(() => {
+      if (pi >= paras.length) {
+        finish();
+        return;
+      }
+      const p = paras[pi]!;
+      ci += 1;
+      p.el.textContent = p.text.slice(0, ci);
+      if (ci >= p.text.length) {
+        pi += 1;
+        ci = 0;
+      }
+    }, 26);
+    skip.onclick = () => {
+      this.sfx.click();
+      finish();
+    };
+    next.onclick = () => {
+      this.sfx.click();
+      onContinue();
+    };
+    // 点正文任意处=跳过渐显（按钮之外的软跳过）
+    blocks.addEventListener('click', finish);
+    row.append(skip, next);
     scr.append(row);
     this.mount(scr);
   }

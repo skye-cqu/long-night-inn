@@ -15,6 +15,7 @@ import { Entity } from './entity';
 import { Survivor } from './survivor';
 import { Echo, readEchoKind, ECHO_MORNING, ECHO_RELIC_TEXT, pickEchoTalk, type EchoKind } from './echo';
 import { buildMirrorView, mirrorSummary, readMirrorStats } from './mirror';
+import { buildFarewell, farewellText as toFarewellText, type FarewellView } from './farewell';
 import { DustField } from './atmosphere';
 import { Guest, readGuestSaved, GUEST_CARD, GUEST_INNKEEPER_INTEL, pickGuestTalk } from './guest';
 import { Hud } from './hud';
@@ -25,7 +26,18 @@ import type { VoxelCollision } from '../collision';
 import type { NavColumn, NavField } from '../nav';
 import type { Object3D, Scene3D, Viewer, Vector3 } from '@manycore/aholo-viewer';
 
-export type Stage = 'boot' | 'title' | 'morning' | 'seam' | 'dive' | 'mirror' | 'settle' | 'talk' | 'progress';
+export type Stage =
+  | 'boot'
+  | 'title'
+  | 'morning'
+  | 'seam'
+  | 'dive'
+  | 'mirror'
+  | 'settle'
+  | 'talk'
+  | 'progress'
+  | 'farewell'
+  | 'poster';
 
 /** 幸存者遭遇结算（E2）：+5 文谢礼 */
 const SURVIVOR_BONUS = 5;
@@ -107,6 +119,8 @@ export class Game {
   private nightIdx = 0;
   /** 已加载世界的夜数（main.ts 启动即载第 1 夜） */
   private worldNight = 1;
+  /** 告辞页最近一次陈词（debug/验收核对用；确定性=同账本同输入必然同文） */
+  private lastFarewell: FarewellView | null = null;
   private worldReady: Promise<void> = Promise.resolve();
   /** 本夜第几次下潜（回响抖动只按「本夜第几次潜」计，setNight 清零——跨夜不泄漏） */
   private nightRunCount = 0;
@@ -209,6 +223,17 @@ export class Game {
         // 镜像对照页（N6）：归航后、结算前，「世界记得你的总和」
         this.stage = 'mirror';
         this.screens.mirror(buildMirrorView(readMirrorStats(this.ledger)), () => this.goto('settle'));
+        break;
+      case 'farewell':
+        // 告辞页（N7 终幕，NightDef.finale 分岔）：结算不进账单卡，进告别陈词——
+        // 花海世界在半透明底后透出，陈词由账本全程确定性拼装（farewell.ts）
+        this.stage = 'farewell';
+        this.hud.show(false);
+        this.deps.controls.setRuntimeEnabled(false);
+        this.sfx.stopHeartbeat();
+        this.lastFarewell = buildFarewell(this.ledger, this.playerName, this.archetype);
+        // 走进亮门 → 结局海报（C4 接线；此处暂走进度页，保证流程不悬空）
+        this.screens.farewell(this.lastFarewell, () => this.goto('progress'));
         break;
       case 'settle':
         this.stage = 'settle';
@@ -321,9 +346,12 @@ export class Game {
     // 回响重玩：战利品价值微变（±echoJitter 文）——只看「本夜第几次潜」，换夜首潜不抖
     this.items.reset(this.nightRunCount > 0 ? def.echoJitter : 0);
     // 世界已就绪（守卫通过）：实体重挂本夜导航/碰撞后再落位（修 setNight 时挂旧 nav 的跨夜残留）
-    this.entity.retarget(this.deps.world.nav, this.deps.world.collision);
-    this.entity.teleport(def.entity.start.x, def.entity.start.z);
-    this.entity.forceState('wander');
+    // 终幕夜（N7 finale）：实体配置占位——不重挂不落位，全程不显形不更新（威胁槽换漫步演出）
+    if (!def.finale) {
+      this.entity.retarget(this.deps.world.nav, this.deps.world.collision);
+      this.entity.teleport(def.entity.start.x, def.entity.start.z);
+      this.entity.forceState('wander');
+    }
 
     // 坠落软复位基线：缓存当夜 nav 可站柱与最低可站面（守卫已保证 world=本夜）
     this.navColumns = this.deps.world.nav.columns;
@@ -378,11 +406,16 @@ export class Game {
       spawn.z,
     );
     this.deps.companion.fear = 0;
-    this.entity.root.visible = true;
+    this.entity.root.visible = !def.finale; // 终幕夜实体保持占位隐藏
     this.hud.show(true);
     this.hud.setVignette('dark'); // 手电初始关闭：暗角压视野=安全
     this.hud.setCountdown(this.timeLeft, false);
-    this.hud.setGoal(0, this.items.loot.length, 0, def.bill);
+    if (def.finale) {
+      // 终幕无账单无信物：目标框换漫步文案（C2 的 hud.setGoalText 接线）
+      this.hud.setGoalText('沿长廊向东走 · 尽头的亮门');
+    } else {
+      this.hud.setGoal(0, this.items.loot.length, 0, def.bill);
+    }
     this.hud.resetCodex(); // 重建本夜图鉴：清掉上局 pushCodexSlot 的特殊所得（跨局不残留）
     this.deps.hint.textContent = '点击画面进入行走模式 · WASD 移动 / 鼠标转向 / E 拾取 / F 手电 / T 说话';
     this.deps.hint.style.opacity = '1';
@@ -412,6 +445,15 @@ export class Game {
       this.echo = null;
     }
     this.dust?.setVisible(false);
+
+    // 终幕夜（N7 finale）：归航结算分岔——不记归航账、不结账单，直接进告别陈词
+    // （陈词本身就是结算：账本的每一条都在段里；三线判定与海报在陈词之后）
+    if (def.finale) {
+      this.nightRunCount++;
+      this.sfx.bell(true);
+      this.goto('farewell');
+      return;
+    }
 
     const lostValue = lostAll ? this.held.reduce((s, i) => s + i.value, 0) : 0;
     if (lostAll) this.held = [];
@@ -505,6 +547,11 @@ export class Game {
     const danger = this.timeLeft <= def.dangerSeconds;
     this.hud.setCountdown(this.timeLeft, danger && this.timeLeft > 0);
     if (this.timeLeft <= 0) {
+      if (def.finale) {
+        // 终幕天亮=自动走到告别（长廊 16.5m，5 分钟绰绰有余；停在花里看花的也放行）
+        this.endDive(false, 'return');
+        return;
+      }
       this.hud.bubble(this.bag.scene('doorclose'), this.archetype, 5000);
       this.endDive(true, 'door');
       return;
@@ -531,20 +578,25 @@ export class Game {
       if (moveNoise > 0) this.entity.hear({ x: ps.position.x, z: ps.position.z, level: moveNoise });
     }
 
-    // 实体
-    const tick = this.entity.update(dt, t, ps.position, this.flashlight);
-    const dist = tick.dist;
+    // 实体（终幕夜跳过：实体占位不显形不更新——恐惧/低语/心跳联动随 dist=∞ 自然归零）
+    let dist = Infinity;
+    let chasing = false;
+    if (!def.finale) {
+      const tick = this.entity.update(dt, t, ps.position, this.flashlight);
+      dist = tick.dist;
+      chasing = tick.state === 'chase';
 
-    // 抓捕
-    if (tick.caught) {
-      this.onCaught();
-      return;
+      // 抓捕
+      if (tick.caught) {
+        this.onCaught();
+        return;
+      }
     }
 
     // 恐惧表（伙计看得见的机制）
     const fear = Math.max(0, Math.min(1, 1 - dist / def.fearRange));
     companion.fear = fear;
-    this.hud.setFear(tick.state === 'chase' ? Math.max(fear, 0.55) : fear * 0.7);
+    this.hud.setFear(chasing ? Math.max(fear, 0.55) : fear * 0.7);
     if (fear > 0.5 && t - this.fearLineT > 14) {
       this.fearLineT = t;
       this.sfx.fearPing();
@@ -552,7 +604,7 @@ export class Game {
     }
 
     // 追击逼近计数（账单卡「遭遇」）；强化实体首进追击 → 伙计强化版台词（替换当刻恐惧话）
-    if (tick.state === 'chase' && !this.wasChasing) {
+    if (chasing && !this.wasChasing) {
       if (dist < 9) this.nearMiss++;
       if (def.entity.enhanced && !this.enhancedChaseShown) {
         this.enhancedChaseShown = true;
@@ -561,7 +613,7 @@ export class Game {
         this.hud.bubble(pickEnhancedChase(), this.archetype, 5200);
       }
     }
-    this.wasChasing = tick.state === 'chase';
+    this.wasChasing = chasing;
 
     // 低语雷达：实体 <whisper.range 每 whisper.interval 秒方位提示
     if (dist < def.whisper.range && t > this.whisperNext) {
@@ -651,8 +703,12 @@ export class Game {
     } else if (echoNear && echoNear.dist < (echoNear.kind === 'gift' ? def.pickupRadius : 2.0)) {
       this.hud.setPrompt(echoNear.kind === 'gift' ? '按 E 收下 · 谢礼灯笼（+5 文）' : '按 E 察看');
     } else if (doorD < def.doorReturnRadius) {
-      const canReturn = this.held.length > 0 || this.caughtCount > 0 || this.timeLeft < 30;
-      this.hud.setPrompt(canReturn ? '按 E 推门归航' : '门在这里。天亮前带着值钱物回来。');
+      if (def.finale) {
+        this.hud.setPrompt('按 E 走进亮门 · 告别');
+      } else {
+        const canReturn = this.held.length > 0 || this.caughtCount > 0 || this.timeLeft < 30;
+        this.hud.setPrompt(canReturn ? '按 E 推门归航' : '门在这里。天亮前带着值钱物回来。');
+      }
     } else if (!(this.survivor?.isPresent && this.survivor.state === 'waiting' && Math.hypot(this.survivor.pos.x - ps.position.x, this.survivor.pos.z - ps.position.z) < 2.5)) {
       this.hud.setPrompt(null);
     }
@@ -717,6 +773,11 @@ export class Game {
     const ps = this.deps.controls.playerState;
     const doorD = Math.hypot(ps.position.x - def.door.x, ps.position.z - def.door.z);
     if (doorD >= def.doorReturnRadius) return false;
+    if (def.finale) {
+      // 终幕：亮门前庭（radius 2.2）内按 E=走进亮门，告别不需要「带值钱物」前提
+      this.endDive(false, 'return');
+      return true;
+    }
     const canReturn = this.held.length > 0 || this.caughtCount > 0 || this.timeLeft < 30;
     if (!canReturn) return false;
     this.endDive(false, 'return');
@@ -1018,6 +1079,11 @@ export class Game {
   }
 
   // ---- 调试/自动化接口（window.__game 暴露） ----
+
+  /** 告别陈词纯文本（__game.farewellText 逐句核对账本来源用；未入告辞页时按当前账本现算） */
+  farewellText(): string {
+    return toFarewellText(this.lastFarewell ?? buildFarewell(this.ledger, this.playerName, this.archetype));
+  }
 
   get debug() {
     return {

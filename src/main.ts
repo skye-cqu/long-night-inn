@@ -315,6 +315,8 @@ function loop(t: number) {
   goto: (stage: string) => (game as unknown as { goto(s: string): void })?.goto(stage as never),
   /** 夜直达（1 起算）：换配置回晨间，世界后台加载；配合 goto('dive') 冒烟 */
   enterNight: (n: number) => game?.enterNight(n) ?? null,
+  /** N7 告别陈词纯文本（逐句核对账本来源用） */
+  farewellText: () => game?.farewellText() ?? null,
   /** 验收快捷：完整 API 集（pickup/speak/setTimer/entityChase/returnHome/ledger…） */
   get api() {
     return game?.api ?? null;
