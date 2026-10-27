@@ -317,6 +317,10 @@ function loop(t: number) {
   enterNight: (n: number) => game?.enterNight(n) ?? null,
   /** N7 告别陈词纯文本（逐句核对账本来源用） */
   farewellText: () => game?.farewellText() ?? null,
+  /** N7 三线判定 {line, stats, rule}（确定性；构造账本核对规则用） */
+  get finale() {
+    return game?.finaleState ?? null;
+  },
   /** 验收快捷：完整 API 集（pickup/speak/setTimer/entityChase/returnHome/ledger…） */
   get api() {
     return game?.api ?? null;

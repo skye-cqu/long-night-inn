@@ -16,6 +16,13 @@ import { Survivor } from './survivor';
 import { Echo, readEchoKind, ECHO_MORNING, ECHO_RELIC_TEXT, pickEchoTalk, type EchoKind } from './echo';
 import { buildMirrorView, mirrorSummary, readMirrorStats } from './mirror';
 import { buildFarewell, farewellText as toFarewellText, type FarewellView } from './farewell';
+import {
+  buildPosterView,
+  judgeFinale,
+  loadFinaleLine,
+  saveFinaleLine,
+  type FinaleLine,
+} from './finale';
 import { DustField } from './atmosphere';
 import { Guest, readGuestSaved, GUEST_CARD, GUEST_INNKEEPER_INTEL, pickGuestTalk } from './guest';
 import { Hud } from './hud';
@@ -80,6 +87,9 @@ export interface FtueState {
   firstPickupMs: number | null;
 }
 
+/** 标题页回响预告行（终幕后；§7.5 P1 回响模式本体不做，只预告） */
+const ECHO_TEASER = '回响预告 · 长夜已尽，乱流仍在门外——再推门时，昨夜会换一种缝法。';
+
 export class Game {
   stage: Stage = 'boot';
   private sfx = new Sfx();
@@ -121,6 +131,8 @@ export class Game {
   private worldNight = 1;
   /** 告辞页最近一次陈词（debug/验收核对用；确定性=同账本同输入必然同文） */
   private lastFarewell: FarewellView | null = null;
+  /** 终幕三线（N7 下潜开始判定一次，世界滤镜/陈词后海报共用；确定性） */
+  private finaleLine: FinaleLine | null = null;
   private worldReady: Promise<void> = Promise.resolve();
   /** 本夜第几次下潜（回响抖动只按「本夜第几次潜」计，setNight 清零——跨夜不泄漏） */
   private nightRunCount = 0;
@@ -174,12 +186,17 @@ export class Game {
     switch (stage) {
       case 'title':
         this.stage = 'title';
-        this.screens.title((c) => {
-          this.playerName = c.name;
-          this.archetype = c.archetype;
-          this.bag = new LineBag(ARCHETYPE_LINES[this.archetype]);
-          this.goto('morning');
-        });
+        // 回标题清三线滤镜（滤镜只属于终幕夜与告辞/海报；标题页还给玩家原样的黑）
+        this.deps.appContainer.classList.remove('finale-debt', 'finale-chaos');
+        this.screens.title(
+          (c) => {
+            this.playerName = c.name;
+            this.archetype = c.archetype;
+            this.bag = new LineBag(ARCHETYPE_LINES[this.archetype]);
+            this.goto('morning');
+          },
+          loadFinaleLine() ? ECHO_TEASER : undefined,
+        );
         break;
       case 'morning':
         this.stage = 'morning';
@@ -232,9 +249,19 @@ export class Game {
         this.deps.controls.setRuntimeEnabled(false);
         this.sfx.stopHeartbeat();
         this.lastFarewell = buildFarewell(this.ledger, this.playerName, this.archetype);
-        // 走进亮门 → 结局海报（C4 接线；此处暂走进度页，保证流程不悬空）
-        this.screens.farewell(this.lastFarewell, () => this.goto('progress'));
+        this.screens.farewell(this.lastFarewell, () => this.goto('poster'));
         break;
+      case 'poster': {
+        // 结局海报（C4）：三线判定（确定性规则见 finale.ts FINALE_RULE）→ 海报三变体
+        // （bill-card 风格印卡 + 柒格终局态 + AI 标识常驻）→「再看一夜」回标题；
+        // 终局存档落 localStorage（柒格终局态/标题页回响预告行数据源）
+        this.stage = 'poster';
+        const judged = judgeFinale(this.ledger);
+        this.finaleLine = judged.line;
+        saveFinaleLine(judged.line);
+        this.screens.poster(buildPosterView(judged, this.playerName), () => this.goto('title'));
+        break;
+      }
       case 'settle':
         this.stage = 'settle';
         this.hud.show(false);
@@ -255,6 +282,7 @@ export class Game {
           unlockedNight: Math.max(loadUnlockedNight(), current),
           paidNights,
           currentNight: current,
+          finaleLine: loadFinaleLine(),
           onReplay: () => this.goto('seam'), // 回响：再潜一次（items.reset 在 beginDive 处理）
           onNext: (night) => this.enterNight(night),
           onTitle: () => this.goto('title'),
@@ -345,6 +373,15 @@ export class Game {
 
     // 回响重玩：战利品价值微变（±echoJitter 文）——只看「本夜第几次潜」，换夜首潜不抖
     this.items.reset(this.nightRunCount > 0 ? def.echoJitter : 0);
+    // 终幕夜（N7 finale）：三线判定（确定性，规则见 finale.ts FINALE_RULE）——下潜开始即
+    // 应用 #app 滤镜三变体（亏=灰烬去饱和/乱=奇观色错位/善=原样）：世界从落进来的那一刻
+    // 就是你的账本显形；告辞页与海报沿用同一滤镜（判定结果同时缓存供海报复用）
+    if (def.finale) {
+      this.finaleLine = judgeFinale(this.ledger).line;
+      this.deps.appContainer.classList.remove('finale-debt', 'finale-chaos');
+      if (this.finaleLine === 'debt') this.deps.appContainer.classList.add('finale-debt');
+      if (this.finaleLine === 'chaos') this.deps.appContainer.classList.add('finale-chaos');
+    }
     // 世界已就绪（守卫通过）：实体重挂本夜导航/碰撞后再落位（修 setNight 时挂旧 nav 的跨夜残留）
     // 终幕夜（N7 finale）：实体配置占位——不重挂不落位，全程不显形不更新（威胁槽换漫步演出）
     if (!def.finale) {
@@ -1083,6 +1120,11 @@ export class Game {
   /** 告别陈词纯文本（__game.farewellText 逐句核对账本来源用；未入告辞页时按当前账本现算） */
   farewellText(): string {
     return toFarewellText(this.lastFarewell ?? buildFarewell(this.ledger, this.playerName, this.archetype));
+  }
+
+  /** 三线判定（__game.finale = {line, stats, rule}；确定性——验收构造账本核对规则用） */
+  get finaleState() {
+    return judgeFinale(this.ledger);
   }
 
   get debug() {

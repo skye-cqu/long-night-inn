@@ -9,6 +9,7 @@ import type { LedgerRecord } from './ledger';
 import { buildBillCardDom, saveBillCardPng, type BillCardData } from './billcard';
 import type { MirrorView } from './mirror';
 import type { FarewellView } from './farewell';
+import { FINALE_LINE_NAME, type FinaleLine, type PosterView } from './finale';
 
 function h(tag: string, cls?: string, html?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -17,11 +18,10 @@ function h(tag: string, cls?: string, html?: string): HTMLElement {
   return e;
 }
 
-/** 动态文本进 innerHTML 前转义（告别陈词含玩家名/夜谈原话等自由文本；C4 海报同用） */
+/** 动态文本进 innerHTML 前转义（告别陈词/海报含玩家名等自由文本） */
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-void esc;
 
 const AI_MARK = '本作 3D 资产由 AI 生成 · AI 生成内容已按平台规范标示';
 
@@ -73,8 +73,8 @@ export class Screens {
     return this.current !== null;
   }
 
-  // ---- 标题 / 开场仪式（≤60s，可跳过） ----
-  title(onStart: (c: StartChoice) => void) {
+  // ---- 标题 / 开场仪式（≤60s，可跳过；echoTeaser=终幕后回响预告行，§7.5 P1） ----
+  title(onStart: (c: StartChoice) => void, echoTeaser?: string) {
     const nameInput = document.createElement('input');
     nameInput.className = 'g-name-input';
     nameInput.value = '';
@@ -90,6 +90,7 @@ export class Screens {
       <h1 class="g-title-main">长夜驿站</h1>
       <div class="g-title-sub">第一夜 · 雾中松林废站</div>
     `;
+    if (echoTeaser) scr.append(h('div', 'g-title-echo', echoTeaser));
     const nameRow = h('div', 'g-title-row');
     nameRow.append(h('label', 'g-title-lab', '掌柜名：'), nameInput);
     scr.append(nameRow);
@@ -140,6 +141,32 @@ export class Screens {
     setTimeout(() => nameInput.focus(), 50);
   }
 
+  // ---- 结局海报（N7 终幕：bill-card 风格三变体 + 账本统计印卡 + 柒格终局态；
+  //      AI 标识随 mount 常驻，槽 #27「截图即分享」） ----
+  poster(view: PosterView, onAgain: () => void) {
+    const scr = h('div', 'g-screen g-poster');
+    const card = h('div', `finale-card ${view.line}`);
+    card.innerHTML = `
+      <div class="fc-head"><span class="fc-title">${esc(view.title)}</span><span class="fc-line">${esc(view.lineName)}</span></div>
+      <div class="fc-art"><i></i><i></i><i></i><i></i></div>
+      <p class="fc-desc">${esc(view.desc)}</p>
+      <div class="fc-stats">${view.stats.map(([k, v]) => `<div class="row"><span class="k">${esc(k)}</span><span>${esc(v)}</span></div>`).join('')}</div>
+      <div class="fc-nights">${view.nights.map((c) => `<span class="${c.cls}">${esc(c.label)}</span>`).join('')}</div>
+      <div class="fc-rule">${esc(view.rule).replace(/\n/g, '<br/>')}</div>
+      <div class="fc-foot"><span>长夜驿站 · ${esc(view.playerName)} · ${esc(view.date)}</span><span>本作 3D 资产由 AI 生成</span></div>
+    `;
+    scr.append(card);
+    const row = h('div', 'g-btn-row center');
+    const again = h('button', 'g-btn primary', '再看一夜（回响）');
+    again.onclick = () => {
+      this.sfx.click();
+      onAgain();
+    };
+    row.append(again);
+    scr.append(row);
+    this.mount(scr);
+  }
+
   // ---- 驿站晨间（hub，按夜配置渲染委托文案；echoMorning=N2 选择回响的一行字，N3 起；
   //      guestCard=N4 住客卡（#26 常客回归，saved 集）；keeperIntel=无住客时的伙计情报行） ----
   morning(records: LedgerRecord[], def: NightDef, onDive: () => void, echoMorning?: string, guestCard?: GuestCardView, keeperIntel?: string) {
@@ -182,8 +209,17 @@ export class Screens {
       `;
       scr.append(card);
     }
+    // N7 终幕（NightDef.finale）：晨间收灯人半张脸出场收走账本（C2 CSS 载体接线，
+    // DOM/CSS 剪影演出零新资产——设计 §2「收灯人是谁：留白，N7 只给半张脸」）
+    if (def.finale) {
+      const stage = h('div', 'g-keeper-stage');
+      stage.innerHTML = `<div class="g-keeper-light"></div><div class="g-keeper-figure"></div><div class="g-keeper-face"></div>`;
+      scr.append(stage);
+      scr.append(h('div', 'g-keeper-cap', '收灯人 · 第一次露了半张脸'));
+      scr.append(h('div', 'g-keeper-note', '他把账本从桌上抽走了。「七夜的账，乱流替你收着。往东走，长廊尽头有扇亮着的门——去和你的伙计道个别。」'));
+    }
     const row = h('div', 'g-btn-row center');
-    const dive = h('button', 'g-btn primary big', `推门下潜 · 第${nightCn(def.night)}夜`);
+    const dive = h('button', 'g-btn primary big', def.finale ? '推门下潜 · 终幕' : `推门下潜 · 第${nightCn(def.night)}夜`);
     dive.onclick = () => {
       this.sfx.click();
       onDive();
@@ -409,12 +445,13 @@ export class Screens {
     this.mount(scr);
   }
 
-  // ---- 进度页（按 NIGHTS 配置 + localStorage 解锁链渲染） ----
+  // ---- 进度页（按 NIGHTS 配置 + localStorage 解锁链渲染；finaleLine=终局后的柒格终局态） ----
   progress(opts: {
     nights: Array<Pick<NightDef, 'night' | 'seedName'>>;
     unlockedNight: number;
     paidNights: number[];
     currentNight: number;
+    finaleLine?: FinaleLine | null;
     onReplay: () => void;
     onNext: (night: number) => void;
     onTitle: () => void;
@@ -423,12 +460,16 @@ export class Screens {
   }) {
     const CN = '壹贰叁肆伍陆柒捌玖';
     const scr = h('div', 'g-screen g-progress');
-    // 七夜网格：已配置夜按解锁/付账渲染，未配置夜（N3+）置灰占位
+    // 七夜网格：已配置夜按解锁/付账渲染，未配置夜（N3+）置灰占位；柒格终局态（.g-night.fin）
     const rows: string[] = [];
     for (let i = 1; i <= 7; i++) {
       const def = opts.nights.find((n) => n.night === i);
       if (!def) {
         rows.push(`<div class="g-night lock"><span class="n-num">${CN[i - 1] ?? i}</span><span class="n-name">未潜入</span><span class="n-state">待解锁</span></div>`);
+        continue;
+      }
+      if (def.night === 7 && opts.finaleLine) {
+        rows.push(`<div class="g-night fin"><span class="n-num">${CN[6]}</span><span class="n-name">${def.seedName}</span><span class="n-state">终局 · ${FINALE_LINE_NAME[opts.finaleLine]}</span></div>`);
         continue;
       }
       const paid = opts.paidNights.includes(def.night);
