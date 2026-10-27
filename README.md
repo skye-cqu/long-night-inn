@@ -1,3 +1,11 @@
+# 长夜驿站（Long Night Inn）
+
+> 每晚你下潜的世界，由你昨天做过的事缝合而成。
+> 群核 Aholo 全球 3D AI 黑客松参赛作品 · Aholo World API 七夜世界 + Lux3D 角色全链路 + aholo-viewer 运行时
+
+**在线体验：https://skye-cqu.github.io/long-night-inn/**
+
+---
 # 长夜驿站 · 游戏工程
 
 《长夜驿站》可玩 Demo 的 web 运行时。脚手架（阶段二任务1）实现：aholo-viewer
