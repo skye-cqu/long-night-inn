@@ -71,8 +71,9 @@ export interface GameDeps {
   scene: Scene3D;
   viewer: Viewer;
   world: WorldHandle;
-  /** 按夜懒加载世界资产（spz/体素/nav），完成后更新 world 句柄 */
-  loadNightWorld(def: NightDef): Promise<void>;
+  /** 按夜懒加载世界资产（spz/体素/nav），完成后更新 world 句柄；force=N7 live 换装用
+   *  （同夜已载烘焙资产时仍强制重拉——只有 spz 换 live 直链，nav/碰撞仍是烘焙口径） */
+  loadNightWorld(def: NightDef, force?: boolean): Promise<void>;
   controls: WalkControls;
   companion: Companion;
   appContainer: HTMLElement;
@@ -89,6 +90,39 @@ export interface FtueState {
 
 /** 标题页回响预告行（终幕后；§7.5 P1 回响模式本体不做，只预告） */
 const ECHO_TEASER = '回响预告 · 长夜已尽，乱流仍在门外——再推门时，昨夜会换一种缝法。';
+
+/** live-gen 本地代理（E11/C5；scripts/live-gen-proxy.mjs，密钥只在服务端） */
+const LIVEGEN_BASE = 'http://localhost:5177';
+/** live-gen 探测超时（毫秒） */
+const LIVEGEN_PROBE_MS = 2000;
+/** live-gen 全链路兜底时限（毫秒）：到点回落烘焙世界 */
+const LIVEGEN_TOTAL_MS = 90000;
+/** live-gen 轮询间隔（毫秒） */
+const LIVEGEN_POLL_MS = 3000;
+/**
+ * N7 现场生成 prompt（红线 §4：生成前写清目的与 prompt）。
+ * 目的：live 演示「乱流今夜现缝」——按 N7 花海长廊同一颗种子现场生成一版世界，
+ * 成功后替换烘焙 spz（碰撞/nav 仍用烘焙——现场缝的是「样子」，物理不变）。
+ * 种子词现场写，零真实 IP。
+ */
+const N7_LIVE_PROMPT =
+  '清晨花海长廊：一条开阔的花园长廊沿东西向延伸，两侧高杆花树与悬空花拱连成拱廊，地面石板步道笔直，尽头一扇亮着暖光的门；暖金偏粉的晨光薄雾，写实 3D 场景';
+
+/** 游戏侧 /health 探测（2s 超时；不可达/非 200 一律视为 off，默认走烘焙世界） */
+async function probeLiveGen(): Promise<'on' | 'off'> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), LIVEGEN_PROBE_MS);
+  try {
+    const r = await fetch(`${LIVEGEN_BASE}/health`, { signal: ctl.signal });
+    console.log(`[livegen] /health 探测 HTTP ${r.status}${r.ok ? ' —— 现场生成可用' : ' —— 走烘焙世界'}`);
+    return r.ok ? 'on' : 'off';
+  } catch {
+    console.log('[livegen] /health 不可达（2s 超时/连接失败）—— 默认烘焙世界');
+    return 'off';
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export class Game {
   stage: Stage = 'boot';
@@ -133,6 +167,9 @@ export class Game {
   private lastFarewell: FarewellView | null = null;
   /** 终幕三线（N7 下潜开始判定一次，世界滤镜/陈词后海报共用；确定性） */
   private finaleLine: FinaleLine | null = null;
+  /** N7 现场生成缝（C5）：'idle' 未探测 / 'probing' 探测中 / 'on' 代理可达 / 'off' 不可达 */
+  private liveGenState: 'idle' | 'probing' | 'on' | 'off' = 'idle';
+  private liveGenProbe: Promise<'on' | 'off'> = Promise.resolve('off');
   private worldReady: Promise<void> = Promise.resolve();
   /** 本夜第几次下潜（回响抖动只按「本夜第几次潜」计，setNight 清零——跨夜不泄漏） */
   private nightRunCount = 0;
@@ -209,6 +246,8 @@ export class Game {
           this.echoMorning ?? undefined,
           this.guestCard(),
           this.keeperIntel() ?? undefined,
+          // N7 现场生成缝（C5）：探测可达才亮「现场生成」次选按钮；默认按钮恒为烘焙
+          this.def.finale ? { probe: this.liveGenProbe, onStart: () => this.gotoSeamLive() } : undefined,
         );
         break;
       case 'seam': {
@@ -303,6 +342,70 @@ export class Game {
     return true;
   }
 
+  // ---- N7 现场生成缝（E11/C5：零密钥进客户端；默认=烘焙，代理可达才出次选） ----
+
+  /** 「现场生成」按钮 → 穿缝转场等现场世界；任何失败/超时回落烘焙（全程 console 留痕）。
+   *  注意 worldOk 必须从 false 起步：setNight 已后台预取烘焙资产（worldNight=7），
+   *  若照抄普通 seam 的「已载即 true」，转场动画一放完就会提前 beginDive——
+   *  现场链还没跑完就落进了烘焙世界。此处只有链路 resolve（live 成功/回落烘焙）才放行。 */
+  private gotoSeamLive() {
+    this.stage = 'seam';
+    this.sfx.seam();
+    let worldOk = false;
+    const ready = this.liveGenChain().then(() => {
+      worldOk = true;
+    });
+    ready.catch((e: unknown) => {
+      console.error('[livegen] 链路异常，退回晨间:', e);
+      this.deps.hint.textContent = '乱流这会儿缝不动新世界……先回驿站吧。';
+      if (this.stage === 'seam') this.goto('morning');
+    });
+    this.screens.seam(() => {
+      if (worldOk) this.beginDive();
+    }, this.def, ready);
+  }
+
+  /**
+   * 现场生成链：POST /gen（代理侧同 prompt 只 create 一次）→ 3s 轮询 /status →
+   * SUCCEEDED 拿 spz 直链 → force 换装 live 世界；90s 超时或任一失败回落烘焙世界
+   * （nav/碰撞沿用烘焙口径——现场缝的是「样子」，物理不变）。resolve 即可下潜。
+   */
+  private async liveGenChain(): Promise<void> {
+    const t0 = Date.now();
+    console.log('[livegen] 现场生成链启动：POST /gen → 轮询 /status → live spz；90s 超时回落烘焙');
+    try {
+      const gen = await fetch(`${LIVEGEN_BASE}/gen`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: N7_LIVE_PROMPT }),
+      });
+      if (!gen.ok) throw new Error(`/gen HTTP ${gen.status}`);
+      const genBody = (await gen.json()) as { id?: string };
+      if (!genBody.id) throw new Error('/gen 未返回 id');
+      console.log(`[livegen] 任务已创建 ${genBody.id}，开始 3s 轮询`);
+      while (Date.now() - t0 < LIVEGEN_TOTAL_MS) {
+        await new Promise((r) => setTimeout(r, LIVEGEN_POLL_MS));
+        const st = await fetch(`${LIVEGEN_BASE}/status/${genBody.id}`);
+        if (!st.ok) throw new Error(`/status HTTP ${st.status}`);
+        const data = (await st.json()) as { status?: string; spz?: string };
+        console.log(`[livegen] status=${data.status ?? '?'}（${Math.round((Date.now() - t0) / 1000)}s）`);
+        if (data.status === 'SUCCEEDED' && data.spz) {
+          const def = this.def;
+          await this.deps.loadNightWorld({ ...def, world: { ...def.world, spz: data.spz } }, true);
+          console.log('[livegen] live 世界换装完成，进入终幕下潜');
+          return;
+        }
+        if (data.status === 'FAILED' || data.status === 'CANCELED' || data.status === 'TIMEOUT' || data.status === 'REJECTED') {
+          throw new Error(`任务终态 ${data.status}`);
+        }
+      }
+      throw new Error('90s 超时');
+    } catch (e) {
+      console.warn(`[livegen] ${e instanceof Error ? e.message : String(e)} → 回落烘焙世界`);
+      await this.ensureWorld(this.def);
+    }
+  }
+
   /** 换夜：重建世界物与实体视觉、刷新 HUD，并后台预取该夜世界 */
   private setNight(idx: number) {
     this.nightIdx = idx;
@@ -332,6 +435,14 @@ export class Game {
     }
     if (def.guest) this.guestSaved = readGuestSaved(this.ledger);
     this.hud.setNight(def);
+    // N7 现场生成探测（C5）：进入终幕夜即探 /health（2s 超时）——晨间渲染时按钮按结果亮/摘
+    if (def.finale) {
+      this.liveGenState = 'probing';
+      this.liveGenProbe = probeLiveGen().then((s) => {
+        this.liveGenState = s;
+        return s;
+      });
+    }
     this.ensureWorld(def); // 晨间屏幕期间后台预取
   }
 
@@ -1125,6 +1236,11 @@ export class Game {
   /** 三线判定（__game.finale = {line, stats, rule}；确定性——验收构造账本核对规则用） */
   get finaleState() {
     return judgeFinale(this.ledger);
+  }
+
+  /** live-gen 缝状态（__game.livegen：探测结果/代理地址；验收 /health 探测与回落链用） */
+  get liveGenDebug() {
+    return { state: this.liveGenState, base: LIVEGEN_BASE };
   }
 
   get debug() {

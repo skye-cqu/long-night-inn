@@ -168,8 +168,17 @@ export class Screens {
   }
 
   // ---- 驿站晨间（hub，按夜配置渲染委托文案；echoMorning=N2 选择回响的一行字，N3 起；
-  //      guestCard=N4 住客卡（#26 常客回归，saved 集）；keeperIntel=无住客时的伙计情报行） ----
-  morning(records: LedgerRecord[], def: NightDef, onDive: () => void, echoMorning?: string, guestCard?: GuestCardView, keeperIntel?: string) {
+  //      guestCard=N4 住客卡（#26 常客回归，saved 集）；keeperIntel=无住客时的伙计情报行；
+  //      liveGen=N7 现场生成缝（C5）：探测可达才亮次选按钮，默认按钮恒为烘焙世界） ----
+  morning(
+    records: LedgerRecord[],
+    def: NightDef,
+    onDive: () => void,
+    echoMorning?: string,
+    guestCard?: GuestCardView,
+    keeperIntel?: string,
+    liveGen?: { probe: Promise<'on' | 'off'>; onStart: () => void },
+  ) {
     const scr = h('div', 'g-screen g-morning');
     scr.innerHTML = `
       <div class="g-hub-head">
@@ -225,6 +234,27 @@ export class Screens {
       onDive();
     };
     row.append(dive);
+    // N7 现场生成次选按钮（C5）：探测期禁用占位，可达才启用；不可达直接摘除（默认=烘焙）
+    if (liveGen) {
+      const live = document.createElement('button');
+      live.className = 'g-btn ghost';
+      live.textContent = '现场生成 · 探测中…';
+      live.disabled = true;
+      liveGen.probe.then((s) => {
+        if (s === 'on') {
+          live.disabled = false;
+          live.textContent = '现场生成 · 乱流今夜现缝';
+        } else {
+          live.remove();
+        }
+      });
+      live.onclick = () => {
+        if (live.disabled) return;
+        this.sfx.click();
+        liveGen.onStart();
+      };
+      row.append(live);
+    }
     scr.append(row);
     this.mount(scr);
   }
@@ -285,12 +315,27 @@ export class Screens {
       }
     };
     const finish = () => {
-      if (!animDone || done) return;
+      // 双门闩：转场动画放完 && 世界就绪（ready resolve）才放行——
+      // 修 E11 前的隐患：旧版动画一放完就无条件 finish/onDone，ready 晚于 2s 时
+      // （慢加载/N7 现场生成 90s 链）onDone 在 worldOk=false 下空转，之后 ready
+      // 再 resolve 也唤不回（done 已 true）——穿缝页清掉、阶段悬死。现改为
+      // finish 必须双条件齐备，「乱流缝合中…」等待路径随之真正可达。
+      if (!animDone || !readyDone || done) return;
       done = true;
       this.clear();
       onDone();
     };
-    ready.then(finish, finish);
+    let readyDone = false;
+    ready.then(
+      () => {
+        readyDone = true;
+        finish();
+      },
+      () => {
+        readyDone = true;
+        finish();
+      },
+    );
     const anim = () => {
       if (done) return;
       const elapsed = performance.now() - t0;

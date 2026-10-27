@@ -124,11 +124,12 @@ let worldSplat: unknown = null;
 /** 世界运行时句柄（Game 只读；换夜时本模块原地更新字段） */
 const world: WorldHandle = { nav: null as never, collision: null, night: 0 };
 
-/** 按夜懒加载世界资产：换 splat + 换导航/碰撞（同夜并发请求合并） */
+/** 按夜懒加载世界资产：换 splat + 换导航/碰撞（同夜并发请求合并；force=同夜强制重拉
+ *  ——N7 live-gen 换装 live spz 用，nav/碰撞仍走烘焙口径） */
 let loadingNight: { night: number; promise: Promise<void> } | null = null;
-function loadNightWorld(def: NightDef): Promise<void> {
-  if (world.night === def.night) return Promise.resolve();
-  if (loadingNight && loadingNight.night === def.night) return loadingNight.promise;
+function loadNightWorld(def: NightDef, force = false): Promise<void> {
+  if (world.night === def.night && !force) return Promise.resolve();
+  if (!force && loadingNight && loadingNight.night === def.night) return loadingNight.promise;
   const promise = (async () => {
     state.phase = 'load-night' + def.night;
     const navResp = await fetch(def.world.nav);
@@ -320,6 +321,10 @@ function loop(t: number) {
   /** N7 三线判定 {line, stats, rule}（确定性；构造账本核对规则用） */
   get finale() {
     return game?.finaleState ?? null;
+  },
+  /** N7 live-gen 缝状态（/health 探测结果与代理地址；回落链验收用） */
+  get livegen() {
+    return game?.liveGenDebug ?? null;
   },
   /** 验收快捷：完整 API 集（pickup/speak/setTimer/entityChase/returnHome/ledger…） */
   get api() {
