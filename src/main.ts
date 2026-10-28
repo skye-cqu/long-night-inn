@@ -156,6 +156,7 @@ function loadNightWorld(def: NightDef, force = false): Promise<void> {
     state.collision = collision ? 'voxel' : 'nav-fallback';
     controls?.setWorld(nav, collision);
     controls?.setBarriers(def.barriers ?? []); // 物理封路（N6 落差口隐形墙；缺省空=无）
+    collision?.setCarves(def.carves ?? []); // P1 运行时挖除（N3 塌拱门洞；缺省空=无）
     companion?.setNav(nav);
     world.nav = nav;
     world.collision = collision;

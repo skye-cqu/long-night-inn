@@ -142,6 +142,11 @@ export interface NightDef {
   /** 物理封路 AABB（N6 高台 8m 落差口，§11.1 隐形墙）：xz 包围盒，y 向不限（高台全高有效）。
    *  行走控制器把玩家胶囊水平推出盒外；视觉碎石堆由 items.ts 按同一盒摆基元。缺省=无 */
   barriers?: Array<{ x0: number; x1: number; z0: number; z1: number }>;
+  /** 运行时挖除 AABB（P1，N3 专用）：世界资产的塌拱/摊棚把主街 x≈1.2-2.8 段全高封死
+   *  （带面级 BFS+多高程蹲行均证无胶囊宽通路，深处两件信物徒步不可达——E14 BUG-1 实锤）。
+   *  collision.ts 在体素查询口径上把盒内视为空=「塌拱下可钻的缝」；玩家从 3DGS 灰尘里
+   *  穿过约 1.8m（可接受的穿模，塌拱本就是碎块）。射线/推离/踏步/实体视线同口径生效。 */
+  carves?: Array<{ x0: number; x1: number; y0: number; y1: number; z0: number; z1: number }>;
   /** 镜像对照页（N6）：归航后、结算前插入「世界记得你的总和」DOM 页（读全部账本统计拼装） */
   mirrorPage?: boolean;
   /** 暖光点（零新资产：主街两侧发光小球+点光；N3 雪夜灯笼暖光；N4 兼作黑暗理智的「灯下安全区」锚） */
@@ -310,10 +315,16 @@ export const N3: NightDef = {
   door: { x: -1.45, z: 0.75 },
   doorReturnRadius: 1.5,
   spawn: { x: -1.45, z: 0.75, yaw: -0.22 },
+  // P1 门洞：塌拱残块（x≈1.15-2.95，y 2-5.5+ 全高实心）把主街封死——挖 z∈[0.42,1.0]、
+  // y∈[2.35,6.2] 的缝让玩家钻过（洞内地面≤2.35 由 nav 带面兜底；选线实测 z 0.3-0.95
+  // 头身窗 14-15/15 列全堵，无天然缝。z 下沿压到 0.42 为吞掉错缝角落体素，防胶囊斜角咬死）。
+  // 选点/深度梯度（6.0/12.0/18.5m）全部原样保留。
+  carves: [{ x0: 1.15, x1: 3.45, y0: 2.35, y1: 6.2, z0: 0.1, z1: 1.0 }],
   loot: [
     // 门 BFS：浅 6.0m / 中 12.0m / 深 18.5m ↔ 10/12/18 文深度梯度；带面 2.3/1.7/3.3 均同带邻 ≥2
     { id: 'oil', name: '封冻的灯油', value: 10, x: 2.55, z: -1.25, color: 0xffb347, glowColor: 0xff9a2e, shape: 'bottle', glb: './assets/token-oil.glb' },
-    { id: 'lantern', name: '未点的红灯笼', value: 12, x: 7.55, z: -1.25, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
+    // P1 挪位：原 (7.55,-1.25) 在凹兜内（兜口无胶囊宽通路，台架 55s 零位移）；北移 0.9m 到主街走廊线 z=-0.35（nav 带面 1.8 全列可站，深度梯度 12m 不变）
+    { id: 'lantern', name: '未点的红灯笼', value: 12, x: 7.55, z: -0.35, color: 0xc9834a, glowColor: 0xffb35c, shape: 'lantern', glb: './assets/token-lantern.glb' },
     { id: 'watch', name: '当铺旧怀表', value: 18, x: 14.55, z: -0.75, color: 0xd8d8e0, glowColor: 0xfff2cc, shape: 'watch', glb: './assets/token-watch.glb' },
   ],
   pickupRadius: 1.6,

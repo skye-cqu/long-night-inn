@@ -11,6 +11,17 @@ const SOLID_LEAF_MARKER = 0xff000000 >>> 0;
 const PENETRATION_EPSILON = 1e-4;
 const MAX_RESOLVE_ITERATIONS = 4;
 
+/** 运行时挖除盒（世界坐标 AABB）：盒内体素视为空——P1 N3 门洞（世界资产把主街
+ *  x≈1.2-2.8 段封死，见 过程留痕/2026-10-27/打回修复-P1P2/）。N6 隐形墙 barriers 的反操作。 */
+export interface CarveBox {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  z0: number;
+  z1: number;
+}
+
 export interface VoxelMeta {
   gridBounds: { min: number[]; max: number[] };
   voxelResolution: number;
@@ -40,6 +51,13 @@ export class VoxelCollision {
   ];
   /** B1 踏步辅助：最近一次胶囊碰撞最深穿入体素的可站顶面 y（上方为空才算可站；null=不可踏） */
   private lastStepTopY: number | null = null;
+  /** P1 运行时挖除盒（空=无）：isVoxelSolid 先过挖除判定（探测/推离/视线全走同一口径） */
+  private carves: CarveBox[] = [];
+
+  /** 换夜时替换挖除盒（main.ts loadNightWorld 按 NightDef.carves 注入；缺省空） */
+  setCarves(list: CarveBox[]) {
+    this.carves = list;
+  }
 
   constructor(metadata: VoxelMeta, nodes: Uint32Array, leafData: Uint32Array) {
     this.gridMinX = metadata.gridBounds.min[0]!;
@@ -68,6 +86,16 @@ export class VoxelCollision {
       iz >= this.voxelCountZ
     ) {
       return false;
+    }
+    // P1 挖除盒：盒内体素视为空（体素中心点判定；射线/推离/踏步共用本查询，天然全口径生效）
+    if (this.carves.length > 0) {
+      const cx = this.gridMinX + (ix + 0.5) * this.voxelSize;
+      const cy = this.gridMinY + (iy + 0.5) * this.voxelSize;
+      const cz = this.gridMinZ + (iz + 0.5) * this.voxelSize;
+      for (let i = 0; i < this.carves.length; i++) {
+        const b = this.carves[i]!;
+        if (cx >= b.x0 && cx <= b.x1 && cy >= b.y0 && cy <= b.y1 && cz >= b.z0 && cz <= b.z1) return false;
+      }
     }
     const blockX = Math.floor(ix / this.leafSize);
     const blockY = Math.floor(iy / this.leafSize);

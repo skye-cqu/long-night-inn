@@ -501,6 +501,9 @@ export class Game {
       this.entity.retarget(this.deps.world.nav, this.deps.world.collision);
       this.entity.teleport(def.entity.start.x, def.entity.start.z);
       this.entity.forceState('wander');
+      // P2 下潜宽限：N5/N6 出生点距实体 5.4-5.7m < 侦测 10/11m，原 0 缓冲即被追（E14 BUG-3，
+      // N6「一拍喘息」注释与实测不符）。开场 3s 实体消化不动——首进追击（N6 设计）在宽限期后照常触发
+      this.entity.calmUntil = performance.now() / 1000 + 3; // 实体时钟=页面单调秒（update 的 t 与 flashlightPing 同源），宽限 3s
     }
 
     // 坠落软复位基线：缓存当夜 nav 可站柱与最低可站面（守卫已保证 world=本夜）

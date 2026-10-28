@@ -263,6 +263,13 @@ export class Entity {
         break;
       }
       case 'chase': {
+        if (now < this.calmUntil) {
+          // P2：calmUntil 对进行中的追击同样生效（entityFreeze 冻不住追击中实体=抓捕误清战利品，
+          // E14 BUG-2）；冷静期内即时退出追击、原地消化
+          this.state = 'wander';
+          this.pickWanderTarget();
+          break;
+        }
         speed = this.cfg.chaseSpeed;
         this.moveTo(playerPos.x, playerPos.z, dt, speed);
         if (hasLOS || enraged) {

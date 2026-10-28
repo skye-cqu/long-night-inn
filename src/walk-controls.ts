@@ -31,9 +31,15 @@ const STAMINA_DRAIN = 26; // /s 跑步消耗
 const STAMINA_REGEN = 14; // /s 恢复
 const STAMINA_SPRINT_MIN = 20; // 低于此值强制回走，恢复过 20 才能再跑
 const STEP_UP_MAX = 0.55; // B1 自动踏步：顶面在脚面之上 ≤ 此高度且上方为空的可站障碍由弹簧抬上（高于此=墙）
+/** P1 踏步带面限高：顶面超出 nav 地面场此高度=带外高面（=墙，不登记踏步）。B1 修复后玩家
+ *  沿台阶/矮家具链式 0.55m 爬升到 nav 带外 1-2m（E14 实测站面 4.2-4.6 vs 带面 2.4），在高面
+ *  上撞真墙钉死。余量 0.75=带面悬浮 0.2+一级满高台阶 0.55：带面一级台阶恰好可登、二级封顶。 */
+const STEP_UP_BAND_MAX = 0.75;
 const WEDGE_TRIGGER = 72; // B1 反死锁：连续「有移动意图但零位移」子步数（≈1.2s）后开始微滑
 const WEDGE_INTERVAL = 9; // 触发后每 ~0.15s 微滑一次
-const WEDGE_NUDGE = 0.045; // 每次微滑距离（m）
+/** P1 阶梯探测距离（米）：依次探更远的侧向位，取最远的碰撞安全距离滑出——单一 0.055m 探距
+ *  在「缺口在 0.1-0.4m 外」的槽位（如 N3 门洞南侧卡口）永远探不到，玩家被槽壁夹死。 */
+const WEDGE_PROBES = [0.055, 0.12, 0.24, 0.4, 0.6]; // 0.6 档：N3 门洞缝沿距直行线≈0.42-0.55，原最大 0.41 探不到
 
 export type Gait = 'walk' | 'sprint' | 'crouch';
 
@@ -92,11 +98,18 @@ export class WalkControls {
   /** B1 反死锁：连续「有移动意图但位移≈0」的子步计数 + 最近一次水平推离方向（微滑选边参考） */
   private wedgeSteps = 0;
   private lastPushXZ = { x: 0, z: 0 };
+  /** P1 带面顶棚网格：nav 可站柱按 0.5m 格取最大高度后做 2m 半径极大滤波——「这一片地形的
+   *  带内上限」。踏步/上推带限的参照面（单格 floorAt 对带内地形起伏会误杀合法上坡，
+   *  见 N4 主街带面 -4.4..-1.6；摊棚/家具顶高出带面 ≥0.75/0.9m 仍被挡）。 */
+  private bandCeil: Float32Array | null = null;
+  private bandCeilNx = 0;
+  private bandCeilNz = 0;
 
   constructor(container: HTMLElement, nav: NavField, collision: VoxelCollision | null) {
     this.container = container;
     this.nav = nav;
     this.collision = collision;
+    this.buildBandCeil(nav);
 
     addEventListener('keydown', this.onKeyDown);
     addEventListener('keyup', this.onKeyUp);
@@ -176,6 +189,7 @@ export class WalkControls {
   setWorld(nav: NavField, collision: VoxelCollision | null) {
     this.nav = nav;
     this.collision = collision;
+    this.buildBandCeil(nav);
   }
 
   /** 换夜：替换物理封路盒（隐形墙；缺省空=无，N1–N5 零变化） */
@@ -230,7 +244,7 @@ export class WalkControls {
     ) {
       this.wedgeSteps++;
       if (this.wedgeSteps >= WEDGE_TRIGGER) {
-        this.applyWedgeNudge();
+        this.applyWedgeNudge(targetX, targetZ);
         this.wedgeSteps -= WEDGE_INTERVAL;
       }
     } else {
@@ -378,6 +392,53 @@ export class WalkControls {
     return ys.length % 2 === 1 ? ys[mid]! : (ys[mid - 1]! + ys[mid]!) * 0.5;
   }
 
+  /** P1 带面参照：当前位置所在格的「带面顶棚」（0.5m 格 + 2m 半径极大滤波；无格/空格退
+   *  回 floorAt）。踏步登记与竖直上推共用——家具/摊棚顶高出此面 ≥0.75/0.9m 即视为带外
+   *  高面（=墙）。 */
+  private localMaxFloor(): number {
+    const base = this.nav.floorAt(this.position.x, this.position.z);
+    const g = this.bandCeil;
+    if (!g) return base;
+    const ix = Math.max(0, Math.min(this.bandCeilNx - 1, Math.floor((this.position.x - this.nav.bboxMin[0]) / 0.5)));
+    const iz = Math.max(0, Math.min(this.bandCeilNz - 1, Math.floor((this.position.z - this.nav.bboxMin[2]) / 0.5)));
+    const v = g[iz * this.bandCeilNx + ix]!;
+    return Number.isFinite(v) ? Math.max(base, v) : base;
+  }
+
+  /** 构建带面顶棚网格（换夜一次）：可站柱高度按 0.5m 格取最大 → 2m 半径极大滤波 */
+  private buildBandCeil(nav: NavField) {
+    const cell = 0.5;
+    const nx = Math.max(1, Math.ceil((nav.bboxMax[0] - nav.bboxMin[0]) / cell));
+    const nz = Math.max(1, Math.ceil((nav.bboxMax[2] - nav.bboxMin[2]) / cell));
+    const raw = new Float32Array(nx * nz).fill(-1e9);
+    for (const c of nav.columns) {
+      const ix = Math.max(0, Math.min(nx - 1, Math.floor((c.x - nav.bboxMin[0]) / cell)));
+      const iz = Math.max(0, Math.min(nz - 1, Math.floor((c.z - nav.bboxMin[2]) / cell)));
+      const j = iz * nx + ix;
+      if (c.y > raw[j]!) raw[j] = c.y;
+    }
+    const R = 4; // 4 格 × 0.5m = 2m 半径（带内地形起伏的局部范围；N4 主街带面跨 2.8m）
+    const out = new Float32Array(nx * nz).fill(-1e9);
+    for (let iz = 0; iz < nz; iz++) {
+      for (let ix = 0; ix < nx; ix++) {
+        let m = -1e9;
+        const z0 = Math.max(0, iz - R), z1 = Math.min(nz - 1, iz + R);
+        const x0 = Math.max(0, ix - R), x1 = Math.min(nx - 1, ix + R);
+        for (let zz = z0; zz <= z1; zz++) {
+          const row = zz * nx;
+          for (let xx = x0; xx <= x1; xx++) {
+            const v = raw[row + xx]!;
+            if (v > m) m = v;
+          }
+        }
+        out[iz * nx + ix] = m;
+      }
+    }
+    this.bandCeil = out;
+    this.bandCeilNx = nx;
+    this.bandCeilNz = nz;
+  }
+
   /** 移动胶囊推出实体体素（官方 demo 同法） */
   private resolveCollision() {
     if (!this.collision) return;
@@ -385,6 +446,14 @@ export class WalkControls {
     const half = CAPSULE_HEIGHT * 0.5 - CAPSULE_RADIUS;
     const push: { x: number; y: number; z: number; topY?: number | null } = { x: 0, y: 0, z: 0 };
     if (this.collision.queryCapsule(this.position.x, centerY, this.position.z, half, CAPSULE_RADIUS, push)) {
+      // P1 竖直上推带限：贴墙时胶囊底缘与体素咬合，推离的 y 分量会逐子步把玩家「爬」上
+      // 任意高墙沿（E14 实测站面被顶到 nav 带外 1-2m，在高面上撞真墙钉死）——推上后的
+      // 脚面会超出「带面顶棚+0.9」的（localMaxFloor=2m 半径地形上限，带内上坡/门廊台阶
+      // 照常可推上；摊棚/家具顶在带面之上 ≥1m，按墙处理）。
+      if (push.y > 1e-4) {
+        const maxFeet = this.localMaxFloor() + STEP_UP_BAND_MAX + 0.15;
+        if (this.position.y - EYE_HEIGHT + push.y > maxFeet) push.y = 0;
+      }
       this.position.x += push.x;
       this.position.y += push.y;
       this.position.z += push.z;
@@ -394,7 +463,9 @@ export class WalkControls {
         this.grounded = true;
       }
       // B1：记录水平推离（微滑选边参考）；低矮可站障碍登记为踏步目标——
-      // 顶面在脚面之上 ≤STEP_UP_MAX 且上方为空（collision 侧判定）才可踏。
+      // 顶面在脚面之上 ≤STEP_UP_MAX 且上方为空（collision 侧判定）才可踏；
+      // P1：再加带面限高（topY ≤ 附近 nav 最高面+0.75，五采样同推上带限）——带外高面=墙，
+      // 防沿台阶/矮家具链式爬升出带。
       this.lastPushXZ.x = push.x;
       this.lastPushXZ.z = push.z;
       const topY = push.topY ?? null;
@@ -403,6 +474,7 @@ export class WalkControls {
         topY !== null &&
         topY > feetY - 0.05 &&
         topY - feetY <= STEP_UP_MAX &&
+        topY <= this.localMaxFloor() + STEP_UP_BAND_MAX &&
         Math.hypot(this.velocity.x, this.velocity.z) > 0.3
       ) {
         if (this.stepUpY === null || topY > this.stepUpY) this.stepUpY = topY;
@@ -411,39 +483,51 @@ export class WalkControls {
     }
   }
 
-  /** B1 反死锁微滑：沿垂直于当前移动方向的两侧探测，取碰撞安全的一侧平移 WEDGE_NUDGE。
+  /** B1 反死锁微滑：沿垂直于当前移动方向的两侧做阶梯距离探测，取碰撞安全的最远侧滑出。
    *  优先沿最近推离方向的切向侧（沿障碍面滑出的自然方向）；两侧都撞（凹角）则不动——
-   *  凹角本来就该挡住。移动前先在该位置做胶囊碰撞测试，保证永不进墙体素。 */
-  private applyWedgeNudge() {
+   *  凹角本来就该挡住。移动前先在目标位置做胶囊碰撞测试，保证永不进墙体素。
+   *  P1 两处强化：①方向与门槛改用本帧移动意图（被正面墙顶死时 velocity≈0，旧判定永不
+   *  触发——E14 实测 N3 主街 12s+ 零位移零微滑）；②探测距离阶梯化（0.055→0.4m），
+   *  缺口在零点几米外的槽位也能一次滑到。 */
+  private applyWedgeNudge(intentX: number, intentZ: number) {
     if (!this.collision) return;
-    const len = Math.hypot(this.velocity.x, this.velocity.z);
+    const len = Math.hypot(intentX, intentZ);
     if (len < 0.2) return;
-    const dx = this.velocity.x / len;
-    const dz = this.velocity.z / len;
+    const dx = intentX / len;
+    const dz = intentZ / len;
     const centerY = this.position.y - EYE_HEIGHT + CAPSULE_HEIGHT * 0.5;
     const half = CAPSULE_HEIGHT * 0.5 - CAPSULE_RADIUS;
-    let pick: { x: number; z: number } | null = null;
+    // 每侧取「最远的碰撞安全探测距离」（找不到则该侧不可用）。不做单调假设——近距被
+    // 转角体素挡住、远距是缺口的情形（N3 门洞卡口）恰要跳过近距取远距；终点已过
+    // queryCapsule 验证，永不落进墙体素。
+    const reach = (px: number, pz: number): number => {
+      let best = 0;
+      for (const d of WEDGE_PROBES) {
+        if (!this.collision!.queryCapsule(
+          this.position.x + px * (d + 0.01),
+          centerY,
+          this.position.z + pz * (d + 0.01),
+          half,
+          CAPSULE_RADIUS,
+          { x: 0, y: 0, z: 0 },
+        )) best = d;
+      }
+      return best;
+    };
+    let pick: { x: number; z: number; d: number } | null = null;
     for (const side of [-1, 1]) {
       const px = -dz * side;
       const pz = dx * side;
-      const free = !this.collision.queryCapsule(
-        this.position.x + px * (WEDGE_NUDGE + 0.01),
-        centerY,
-        this.position.z + pz * (WEDGE_NUDGE + 0.01),
-        half,
-        CAPSULE_RADIUS,
-        { x: 0, y: 0, z: 0 },
-      );
-      if (!free) continue;
-      if (px * this.lastPushXZ.x + pz * this.lastPushXZ.z > 0.01) {
-        pick = { x: px, z: pz };
-        break;
+      const d = reach(px, pz);
+      if (d <= 0) continue;
+      if (px * this.lastPushXZ.x + pz * this.lastPushXZ.z > 0.01 || pick === null) {
+        pick = { x: px, z: pz, d };
+        if (px * this.lastPushXZ.x + pz * this.lastPushXZ.z > 0.01) break; // 背离推离侧优先且已得
       }
-      pick = pick ?? { x: px, z: pz };
     }
     if (pick) {
-      this.position.x += pick.x * WEDGE_NUDGE;
-      this.position.z += pick.z * WEDGE_NUDGE;
+      this.position.x += pick.x * pick.d;
+      this.position.z += pick.z * pick.d;
     }
   }
 
